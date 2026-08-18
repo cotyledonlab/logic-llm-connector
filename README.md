@@ -6,9 +6,9 @@ multiple Logic adapters behind one stable interface.
 
 ## Status
 
-Foundation work is in progress. The first supported capability is environment
-diagnosis; mutating Logic tools are added only after they pass a real-Logic
-integration test.
+Foundation work is in progress. Environment diagnosis and verified transport
+play/stop are supported; additional mutating Logic tools are added only after
+they pass a real-Logic integration test.
 
 ## Architecture
 
@@ -35,12 +35,12 @@ npm run test:package
 npm run test:integration
 ```
 
-Real-Logic tests will always use disposable fixtures and require explicit test
-mode. The current integration tests are read-only: they launch the Swift
-Companion, connect over a mode-`0600` Unix socket, verify `logic_doctor` through
-a real MCP stdio client, inspect a bounded text-free Accessibility snapshot,
-and verify focus-loss and emergency-stop safety against the running Logic
-installation.
+Project-mutating real-Logic tests will use disposable fixtures and require
+explicit test mode. The current integration tests launch the Swift Companion,
+connect over a mode-`0600` Unix socket, verify `logic_doctor`, inspect a bounded
+text-free Accessibility snapshot, verify focus-loss and emergency-stop safety,
+and exercise reversible play/stop while restoring the original transport state.
+They do not edit or save the open project.
 
 ## Current capability
 
@@ -56,6 +56,12 @@ installation.
 the Companion and MCP server start with `LOGIC_ENABLE_DIAGNOSTICS=1`. Its
 bounded snapshot contains UI roles, identifiers, focus flags, and child counts,
 but deliberately excludes titles, values, descriptions, and UI actions.
+
+`logic_play` and `logic_stop` dispatch Mackie Control transport buttons and
+report success only after matching feedback returns from Logic. Already-observed
+states are idempotent; missing endpoints, feedback timeouts, and dispatch errors
+remain explicit. The `logic://transport/state` MCP resource exposes observed
+playback, cycle, and record-button readiness state.
 
 The signed Companion runs as a menu-bar app. Its menu continuously reports the
 native connection, whether Logic is running, and Exclusive Test Mode status.

@@ -4,8 +4,8 @@
 
 - Repository: `cotyledonlab/logic-llm-connector` (private)
 - Branch: `main`
-- Last completed implementation commit: `bc06cd9`
-- Last completed acceptance commit: `0ff2a21`
+- Last completed implementation commit: `4805724`
+- Last completed acceptance commit: `6a4a495`
 - Specification: [`SPEC.md`](SPEC.md)
 - Delivery status: [`docs/tickets/README.md`](docs/tickets/README.md)
 - Expected worktree state after this handoff commit: clean and pushed
@@ -25,6 +25,23 @@
 
 Ticket 0006 was deliberately split after its tracer bullet proved that AX
 inspection and mutable automation safety are separate vertical slices.
+
+## In-progress ticket
+
+Ticket 0009 has a completed and pushed play/stop tracer bullet. MCP now exposes
+`logic_play`, `logic_stop`, and the `logic://transport/state` resource. The
+Companion sends Mackie Control button press/release messages and decodes returned
+cycle, stop, play, and record LEDs. A command succeeds only when returned
+feedback observes the requested state; already-observed states are idempotent.
+Endpoint failures, dispatch errors, and feedback timeouts have explicit
+outcomes.
+
+Packaged acceptance exercised stop, focus-independent play with Finder
+frontmost, resource observation, stop, and restoration of the original play
+state. The open Logic project was not edited or saved.
+
+Ticket 0009 remains in progress because location navigation and its restorable
+real-Logic acceptance test are not implemented yet.
 
 ### Exclusive Test Mode
 
@@ -90,6 +107,13 @@ The result is bounded by `maxDepth` (0–8) and `maxNodes` (1–1000). Nodes con
 role, subrole, identifier, enabled/focused flags, parent, and child count. The
 model cannot contain titles, values, descriptions, or UI actions.
 
+### Verified transport checkpoint
+
+`logic_play` and `logic_stop` are public by default. Results include the
+requested state, whether a MIDI command was dispatched, the observed transport
+state, reliability, and Mackie feedback evidence. `logic://transport/state`
+reports playback plus observed cycle and record-button readiness.
+
 ## Verified local environment
 
 - macOS: 26.5.2
@@ -103,7 +127,8 @@ model cannot contain titles, values, descriptions, or UI actions.
 - Actual signing TeamIdentifier: `4N63MQVR2B`
 - Designated requirement: certificate-backed, not code-hash-backed
 
-No Logic mutation has occurred. All real-Logic work to date is read-only.
+No Logic project edit or save has occurred. Ticket 0009 acceptance performed
+only reversible transport playback and restored the original stopped state.
 
 ## Final passing gates
 
@@ -119,27 +144,27 @@ npm run test:integration
 
 The final run passed:
 
-- 5 JSON Schema contract tests
-- 2 MCP client tests
-- 25 discovered Swift tests, with 3 real-Logic-only cases skipped in the
+- 7 JSON Schema contract tests
+- 3 MCP client tests
+- 31 discovered Swift tests, with 3 real-Logic-only cases skipped in the
   ordinary native suite
 - certificate-backed package identity test
 - packaged, full-stack real-Logic integration tests covering Doctor, default
   diagnostic denial, diagnostic opt-in, bounded AX inspection, MIDI endpoint
-  readiness, exact Mackie assignment, inbound Mackie feedback, focus loss, and
-  emergency stop
+  readiness, exact Mackie assignment, inbound Mackie feedback, focus loss,
+  emergency stop, focus-independent play/stop, transport state, and restoration
 
 `npm run test:integration` sets `LOGIC_INTEGRATION_TEST=1` and exercises the
 running Logic installation through the packaged Companion.
 
-## Next ticket
+## Next work
 
-Start [`0009 — Verified transport`](docs/tickets/0009-verified-transport.md).
+Continue [`0009 — Verified transport`](docs/tickets/0009-verified-transport.md).
 
-Recommended first red→green slice: define the smallest typed play/stop request
-and result, send it through the established Mackie seam, and verify both Logic's
-transport UI state and returned/observed MIDI feedback. Preserve idempotent stop
-behavior and bounded timeouts before adding location navigation.
+The next red→green slice is location navigation. Decode the Mackie position
+display or another deterministic position feedback mechanism, define a bounded
+rewind/locate contract, and ensure real-Logic acceptance can restore the exact
+original location before marking the ticket complete.
 
 Ticket 0010 (Test Project lifecycle) will supply the policy context that enables
 Test Mode activation.
@@ -162,6 +187,9 @@ Test Mode activation.
 - `VirtualMIDIEndpointOwner` is the stable CoreMIDI seam. It uses MIDI 1.0 UMP,
   preserves host timestamps, serializes endpoint access, and hands receive work
   off the CoreMIDI callback thread.
+- `MackieTransportController` owns transport dispatch and verification. Never
+  treat a successful `send` as operation success; only a matching newer
+  `MackieControlFeedbackMonitor` observation verifies a transition.
 - `MacMackieControlObserver` is a specialized read-only observer. Its Setup
   window must remain visible when Doctor or real acceptance tests classify the
   assignment.
