@@ -27,6 +27,31 @@ async function waitForSocket(path: string): Promise<void> {
   throw new Error(`Companion did not create ${path}`);
 }
 
+async function waitForMackieAcceptance(
+  bridge: UnixSocketLogicBridge,
+): Promise<Awaited<ReturnType<UnixSocketLogicBridge["doctor"]>>> {
+  const deadline = Date.now() + 5_000;
+  let result: Awaited<ReturnType<UnixSocketLogicBridge["doctor"]>> | undefined;
+  while (Date.now() < deadline) {
+    result = await bridge.doctor({
+      protocolVersion: "1.0.0",
+      operationId: "real-logic-doctor",
+    });
+    const checks = result.data.checks;
+    if (
+      checks.find((check) => check.id === "logic.control_surface.mackie")?.status ===
+        "passed" &&
+      checks.find((check) => check.id === "midi.mackie_feedback")?.status ===
+        "passed"
+    ) {
+      return result;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (result) return result;
+  throw new Error("Doctor did not return a result");
+}
+
 test("TypeScript diagnoses the running Logic instance through the native socket", async (t) => {
   const socketPath = `/tmp/logic-llm-connector-${process.pid}.sock`;
   await rm(socketPath, { force: true });
@@ -47,10 +72,7 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
 
   await waitForSocket(socketPath);
   const bridge = new UnixSocketLogicBridge({ socketPath, timeoutMs: 2_000 });
-  const result = await bridge.doctor({
-    protocolVersion: "1.0.0",
-    operationId: "real-logic-doctor",
-  });
+  const result = await waitForMackieAcceptance(bridge);
 
   assert.equal(stderr, "");
   assert.equal(result.operationId, "real-logic-doctor");
@@ -68,6 +90,32 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
   );
   assert.match(JSON.stringify(midi?.evidence), /Logic LLM Connector Out/);
   assert.match(JSON.stringify(midi?.evidence), /Logic LLM Connector In/);
+  const accessibility = result.data.checks.find(
+    (check) => check.id === "permission.accessibility",
+  );
+  assert.equal(accessibility?.status, "passed");
+  const mackie = result.data.checks.find(
+    (check) => check.id === "logic.control_surface.mackie",
+  );
+  assert.equal(mackie?.status, "passed", JSON.stringify(mackie));
+  assert.equal(
+    mackie?.summary,
+    "Mackie Control is assigned to both Logic LLM Connector MIDI ports",
+  );
+  const mackieEvidence = JSON.stringify(mackie?.evidence);
+  assert.match(mackieEvidence, /"state":"configured"/);
+  assert.match(mackieEvidence, /"model":"Mackie Control"/);
+  assert.match(mackieEvidence, /"inputPort":"Logic LLM Connector Out"/);
+  assert.match(mackieEvidence, /"outputPort":"Logic LLM Connector In"/);
+  const feedback = result.data.checks.find(
+    (check) => check.id === "midi.mackie_feedback",
+  );
+  assert.equal(feedback?.status, "passed", JSON.stringify(feedback));
+  assert.equal(
+    feedback?.summary,
+    "Logic sent Mackie-compatible feedback to the Companion",
+  );
+  assert.match(JSON.stringify(feedback?.evidence), /"packetCount":[1-9][0-9]*/);
 
   const mcpTransport = new StdioClientTransport({
     command: join(process.cwd(), "node_modules/.bin/tsx"),
