@@ -5,6 +5,7 @@ public enum BridgeRouterError: Error, Equatable {
     case unsupportedProtocolVersion(String)
     case unsupportedMethod(String)
     case diagnosticsDisabled
+    case transportUnavailable
 }
 
 public enum JSONRPCID: Codable, Sendable, Equatable {
@@ -73,6 +74,34 @@ private struct InspectUIRequest: Codable {
     let params: InspectUIParameters
 }
 
+private struct TransportStateRequest: Codable {
+    let jsonrpc: String
+    let id: JSONRPCID
+    let method: String
+    let params: DoctorParameters
+}
+
+private struct TransportSetPlayingParameters: Codable {
+    let protocolVersion: String
+    let operationID: String
+    let playing: Bool
+    let timeoutMs: Int
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion
+        case operationID = "operationId"
+        case playing
+        case timeoutMs
+    }
+}
+
+private struct TransportSetPlayingRequest: Codable {
+    let jsonrpc: String
+    let id: JSONRPCID
+    let method: String
+    let params: TransportSetPlayingParameters
+}
+
 private struct JSONRPCResponse<Result: Codable>: Codable {
     let jsonrpc: String
     let id: JSONRPCID
@@ -83,17 +112,20 @@ public struct BridgeRouter: Sendable {
     private let doctor: Doctor
     private let axSnapshotter: any LogicAXSnapshotting
     private let diagnosticsEnabled: Bool
+    private let transport: (any TransportControlling)?
     private let now: @Sendable () -> Date
 
     public init(
         doctor: Doctor,
         axSnapshotter: any LogicAXSnapshotting = MacLogicAXSnapshotter(),
         diagnosticsEnabled: Bool = false,
+        transport: (any TransportControlling)? = nil,
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.doctor = doctor
         self.axSnapshotter = axSnapshotter
         self.diagnosticsEnabled = diagnosticsEnabled
+        self.transport = transport
         self.now = now
     }
 
@@ -108,9 +140,43 @@ public struct BridgeRouter: Sendable {
             return try routeDoctor(data)
         case "logic.inspectUI":
             return try routeInspectUI(data)
+        case "logic.transport.state":
+            return try routeTransportState(data)
+        case "logic.transport.setPlaying":
+            return try routeTransportSetPlaying(data)
         default:
             throw BridgeRouterError.unsupportedMethod(envelope.method)
         }
+    }
+
+    private func routeTransportState(_ data: Data) throws -> Data {
+        guard let transport else { throw BridgeRouterError.transportUnavailable }
+        let request = try JSONDecoder().decode(TransportStateRequest.self, from: data)
+        try validateProtocolVersion(request.params.protocolVersion)
+        return try JSONEncoder.bridge.encode(
+            JSONRPCResponse(
+                jsonrpc: "2.0",
+                id: request.id,
+                result: transport.observe(operationID: request.params.operationID)
+            )
+        )
+    }
+
+    private func routeTransportSetPlaying(_ data: Data) throws -> Data {
+        guard let transport else { throw BridgeRouterError.transportUnavailable }
+        let request = try JSONDecoder().decode(TransportSetPlayingRequest.self, from: data)
+        try validateProtocolVersion(request.params.protocolVersion)
+        return try JSONEncoder.bridge.encode(
+            JSONRPCResponse(
+                jsonrpc: "2.0",
+                id: request.id,
+                result: transport.setPlaying(
+                    request.params.playing,
+                    operationID: request.params.operationID,
+                    timeoutMilliseconds: request.params.timeoutMs
+                )
+            )
+        )
     }
 
     private func routeDoctor(_ data: Data) throws -> Data {

@@ -43,6 +43,62 @@ private struct FixedAXSnapshotter: LogicAXSnapshotting {
     }
 }
 
+private struct FixedTransportController: TransportControlling {
+    private let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+
+    func observe(operationID: String) -> TransportStateResult {
+        TransportStateResult(
+            protocolVersion: bridgeProtocolVersion,
+            operationID: operationID,
+            status: .succeeded,
+            reliability: .verifiedDeterministic,
+            startedAt: timestamp,
+            finishedAt: timestamp,
+            data: state(.stopped),
+            evidence: evidence(.stopped)
+        )
+    }
+
+    func setPlaying(
+        _ playing: Bool,
+        operationID: String,
+        timeoutMilliseconds: Int
+    ) -> TransportOperationResult {
+        let requested: TransportPlayingState = playing ? .playing : .stopped
+        return TransportOperationResult(
+            protocolVersion: bridgeProtocolVersion,
+            operationID: operationID,
+            status: .succeeded,
+            reliability: .verifiedDeterministic,
+            startedAt: timestamp,
+            finishedAt: timestamp,
+            data: TransportOperationData(
+                requestedState: requested,
+                commandDispatched: true,
+                state: state(requested)
+            ),
+            evidence: evidence(requested)
+        )
+    }
+
+    private func state(_ playing: TransportPlayingState) -> TransportStateData {
+        TransportStateData(
+            playing: playing,
+            cycle: .disabled,
+            recordReady: .notReady,
+            observedAt: timestamp
+        )
+    }
+
+    private func evidence(_ playing: TransportPlayingState) -> [Evidence] {
+        [Evidence(
+            source: "Mackie Control feedback",
+            observedAt: timestamp,
+            value: .string(playing.rawValue)
+        )]
+    }
+}
+
 @Test("bridge routes a versioned JSON-RPC doctor request")
 func bridgeRoutesDoctorRequest() throws {
     let request = """
@@ -103,4 +159,34 @@ func bridgeRoutesEnabledUIInspection() throws {
     #expect(firstNode["title"] == nil)
     #expect(firstNode["value"] == nil)
     #expect(firstNode["description"] == nil)
+}
+
+@Test("bridge routes transport state and verified play requests")
+func bridgeRoutesTransportRequests() throws {
+    let router = BridgeRouter(
+        doctor: Doctor(system: RouterSystem()),
+        transport: FixedTransportController()
+    )
+    let stateRequest = """
+    {"jsonrpc":"2.0","id":"state-1","method":"logic.transport.state","params":{"protocolVersion":"1.0.0","operationId":"state-1"}}
+    """.data(using: .utf8)!
+    let playRequest = """
+    {"jsonrpc":"2.0","id":"play-1","method":"logic.transport.setPlaying","params":{"protocolVersion":"1.0.0","operationId":"play-1","playing":true,"timeoutMs":750}}
+    """.data(using: .utf8)!
+
+    let stateResponse = try #require(
+        JSONSerialization.jsonObject(with: router.handle(stateRequest)) as? [String: Any]
+    )
+    let stateResult = try #require(stateResponse["result"] as? [String: Any])
+    let state = try #require(stateResult["data"] as? [String: Any])
+    #expect(state["playing"] as? String == "stopped")
+
+    let playResponse = try #require(
+        JSONSerialization.jsonObject(with: router.handle(playRequest)) as? [String: Any]
+    )
+    let playResult = try #require(playResponse["result"] as? [String: Any])
+    let playData = try #require(playResult["data"] as? [String: Any])
+    #expect(playResult["status"] as? String == "succeeded")
+    #expect(playData["requestedState"] as? String == "playing")
+    #expect(playData["commandDispatched"] as? Bool == true)
 }

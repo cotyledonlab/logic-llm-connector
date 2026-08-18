@@ -286,7 +286,8 @@ private let router = BridgeRouter(
         mackieControl: MacMackieControlObserver(),
         mackieFeedback: mackieFeedback
     ),
-    diagnosticsEnabled: diagnosticsEnabled
+    diagnosticsEnabled: diagnosticsEnabled,
+    transport: MackieTransportController(midi: midiOwner, feedback: mackieFeedback)
 )
 private let application = NSApplication.shared
 private let delegate = CompanionApplicationDelegate(

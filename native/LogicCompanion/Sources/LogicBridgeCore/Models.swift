@@ -115,6 +115,103 @@ public struct DoctorResult: Codable, Sendable, Equatable {
     }
 }
 
+public enum TransportPlayingState: String, Codable, Sendable {
+    case playing
+    case stopped
+    case unknown
+}
+
+public enum TransportCycleState: String, Codable, Sendable {
+    case enabled
+    case disabled
+    case unknown
+}
+
+public enum TransportRecordReadyState: String, Codable, Sendable {
+    case ready
+    case notReady = "not_ready"
+    case unknown
+}
+
+public struct TransportStateData: Codable, Sendable, Equatable {
+    public let playing: TransportPlayingState
+    public let cycle: TransportCycleState
+    public let recordReady: TransportRecordReadyState
+    public let observedAt: Date?
+
+    public init(
+        playing: TransportPlayingState,
+        cycle: TransportCycleState,
+        recordReady: TransportRecordReadyState,
+        observedAt: Date?
+    ) {
+        self.playing = playing
+        self.cycle = cycle
+        self.recordReady = recordReady
+        self.observedAt = observedAt
+    }
+}
+
+public struct TransportStateResult: Codable, Sendable, Equatable {
+    public let protocolVersion: String
+    public let operationID: String
+    public let status: OperationStatus
+    public let reliability: Reliability
+    public let startedAt: Date
+    public let finishedAt: Date
+    public let data: TransportStateData
+    public let evidence: [Evidence]
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion
+        case operationID = "operationId"
+        case status
+        case reliability
+        case startedAt
+        case finishedAt
+        case data
+        case evidence
+    }
+}
+
+public struct TransportOperationData: Codable, Sendable, Equatable {
+    public let requestedState: TransportPlayingState
+    public let commandDispatched: Bool
+    public let state: TransportStateData
+
+    public init(
+        requestedState: TransportPlayingState,
+        commandDispatched: Bool,
+        state: TransportStateData
+    ) {
+        self.requestedState = requestedState
+        self.commandDispatched = commandDispatched
+        self.state = state
+    }
+}
+
+public struct TransportOperationResult: Codable, Sendable, Equatable {
+    public let protocolVersion: String
+    public let operationID: String
+    public let status: OperationStatus
+    public let reliability: Reliability
+    public let startedAt: Date
+    public let finishedAt: Date
+    public let data: TransportOperationData
+    public let evidence: [Evidence]
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion
+        case operationID = "operationId"
+        case status
+        case reliability
+        case startedAt
+        case finishedAt
+        case data
+        case evidence
+    }
+}
+
 public extension JSONEncoder {
     static var bridge: JSONEncoder {
         let encoder = JSONEncoder()

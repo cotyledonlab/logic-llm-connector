@@ -46,6 +46,10 @@ public protocol VirtualMIDIEndpointObserving: Sendable {
     var snapshot: VirtualMIDIEndpointSnapshot { get }
 }
 
+public protocol TransportMIDISending: VirtualMIDIEndpointObserving {
+    func send(_ message: MIDIMessage) throws
+}
+
 public struct MIDIMessage: Sendable, Equatable {
     public let timestamp: MIDITimeStamp
     public let words: [UInt32]
@@ -70,7 +74,7 @@ public struct VirtualMIDIEndpointError: Error, Sendable, Equatable, CustomString
     }
 }
 
-public final class VirtualMIDIEndpointOwner: VirtualMIDIEndpointObserving, @unchecked Sendable {
+public final class VirtualMIDIEndpointOwner: TransportMIDISending, @unchecked Sendable {
     private let lock = NSLock()
     private let receiveQueue: DispatchQueue
     private let onReceive: @Sendable ([MIDIMessage]) -> Void
