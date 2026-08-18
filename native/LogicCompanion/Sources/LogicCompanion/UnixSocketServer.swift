@@ -8,14 +8,20 @@ enum UnixSocketServerError: Error {
     case requestTooLarge
 }
 
-final class UnixSocketServer {
+final class UnixSocketServer: @unchecked Sendable {
     private let path: String
     private let router: BridgeRouter
+    private let onConnectionStatus: @Sendable (CompanionConnectionStatus) -> Void
     private var descriptor: Int32 = -1
 
-    init(path: String, router: BridgeRouter) {
+    init(
+        path: String,
+        router: BridgeRouter,
+        onConnectionStatus: @escaping @Sendable (CompanionConnectionStatus) -> Void = { _ in }
+    ) {
         self.path = path
         self.router = router
+        self.onConnectionStatus = onConnectionStatus
     }
 
     deinit {
@@ -51,6 +57,7 @@ final class UnixSocketServer {
             throw systemError("chmod")
         }
         guard Darwin.listen(descriptor, 8) == 0 else { throw systemError("listen") }
+        onConnectionStatus(.listening)
 
         while true {
             let client = Darwin.accept(descriptor, nil, nil)
@@ -58,6 +65,7 @@ final class UnixSocketServer {
                 if errno == EINTR { continue }
                 throw systemError("accept")
             }
+            onConnectionStatus(.connected)
             do {
                 try handle(client)
             } catch {
@@ -65,6 +73,7 @@ final class UnixSocketServer {
                 try? writeAll(Data(message.utf8), to: client)
             }
             Darwin.close(client)
+            onConnectionStatus(.listening)
         }
     }
 
