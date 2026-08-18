@@ -69,6 +69,12 @@ The Companion also owns stable CoreMIDI MIDI 1.0 virtual endpoints named
 copied out of CoreMIDI's real-time callback and handed to a dedicated queue;
 endpoint loss is observable and recovered without changing endpoint identity.
 
+Mackie Control onboarding is guided from the Companion menu. Doctor classifies
+the visible Logic Control Surfaces Setup state as missing, configured, or
+conflicting without reading or writing Logic's preference files. See the
+[Mackie Control setup guide](docs/mackie-control-setup.md) for idempotent setup,
+teardown, and recovery steps.
+
 Build and launch the signed Companion, then run the MCP server:
 
 ```sh

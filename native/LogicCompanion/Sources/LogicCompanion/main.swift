@@ -24,6 +24,7 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
     private let router: BridgeRouter
     private let midiOwner: VirtualMIDIEndpointOwner
     private let systemObserver = MacSystemObserver()
+    private let mackieObserver = MacMackieControlObserver()
     private let testModeController = ExclusiveTestModeController()
     private lazy var safetyMonitor = AutomationSafetyMonitor(
         controller: testModeController,
@@ -35,6 +36,7 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
     private var statusItem: NSStatusItem?
     private var connectionItem: NSMenuItem?
     private var logicItem: NSMenuItem?
+    private var mackieItem: NSMenuItem?
     private var testModeItem: NSMenuItem?
     private var pauseItem: NSMenuItem?
     private var resumeItem: NSMenuItem?
@@ -86,8 +88,16 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
         let menu = NSMenu()
         let connectionItem = NSMenuItem(title: "Connection: Starting", action: nil, keyEquivalent: "")
         let logicItem = NSMenuItem(title: "Logic Pro: Checking", action: nil, keyEquivalent: "")
+        let mackieItem = NSMenuItem(title: "Mackie Control: Checking", action: nil, keyEquivalent: "")
         let testModeItem = NSMenuItem(title: "Test Mode: Inactive", action: nil, keyEquivalent: "")
-        [connectionItem, logicItem, testModeItem].forEach { $0.isEnabled = false }
+        [connectionItem, logicItem, mackieItem, testModeItem].forEach { $0.isEnabled = false }
+
+        let mackieSetupItem = NSMenuItem(
+            title: "Mackie Control Setup Guide…",
+            action: #selector(showMackieSetupGuide),
+            keyEquivalent: ""
+        )
+        mackieSetupItem.target = self
 
         let unavailableStartItem = NSMenuItem(
             title: "Start Test Mode (Test Project Required)",
@@ -117,6 +127,8 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
 
         menu.addItem(connectionItem)
         menu.addItem(logicItem)
+        menu.addItem(mackieItem)
+        menu.addItem(mackieSetupItem)
         menu.addItem(.separator())
         menu.addItem(testModeItem)
         menu.addItem(unavailableStartItem)
@@ -130,6 +142,7 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
         statusItem = item
         self.connectionItem = connectionItem
         self.logicItem = logicItem
+        self.mackieItem = mackieItem
         self.testModeItem = testModeItem
         self.pauseItem = pauseItem
         self.resumeItem = resumeItem
@@ -175,6 +188,7 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
         )
         connectionItem?.title = presentation.connectionTitle
         logicItem?.title = presentation.logicTitle
+        mackieItem?.title = mackieStatusTitle()
         testModeItem?.title = presentation.testModeTitle
         pauseItem?.isEnabled = presentation.canPause
         resumeItem?.isEnabled = presentation.canResume
@@ -214,6 +228,40 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
     @objc private func emergencyStop() {
         testModeController.emergencyStop()
         refreshStatus()
+    }
+
+    @objc private func showMackieSetupGuide() {
+        let alert = NSAlert()
+        alert.messageText = "Set Up Mackie Control"
+        alert.informativeText = """
+        1. Keep Logic Companion running.
+        2. In Logic Pro, choose Logic Pro > Control Surfaces > Setup.
+        3. If an exact connector assignment already exists, do not add another one.
+        4. Otherwise choose New > Install, select Mackie Control, and click Add.
+        5. Select the device and set Input Port to Logic LLM Connector Out.
+        6. Set Output Port to Logic LLM Connector In.
+        7. Leave Setup visible until this menu reports Configured.
+
+        Remove split, duplicate, or non-Mackie assignments that use either connector port before adding the expected device.
+        """
+        alert.addButton(withTitle: "OK")
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+
+    private func mackieStatusTitle() -> String {
+        switch mackieObserver.mackieControlObservation {
+        case let .observed(configuration):
+            switch configuration.state {
+            case .missing: "Mackie Control: Missing"
+            case .configured: "Mackie Control: Configured"
+            case .conflicting: "Mackie Control: Conflict"
+            }
+        case .unavailable(.setupWindowClosed):
+            "Mackie Control: Open Setup to Check"
+        case .unavailable:
+            "Mackie Control: Unable to Check"
+        }
     }
 }
 
