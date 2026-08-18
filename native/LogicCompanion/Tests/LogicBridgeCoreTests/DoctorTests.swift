@@ -17,9 +17,20 @@ private struct FixedSystem: SystemObserving {
     let accessibilityTrusted = false
 }
 
+private struct FixedMIDIEndpoints: VirtualMIDIEndpointObserving {
+    let snapshot = VirtualMIDIEndpointSnapshot(
+        sourceAvailable: true,
+        destinationAvailable: true,
+        protocolID: ._1_0
+    )
+}
+
 @Test("doctor reports observed Logic and permission readiness")
 func doctorReportsObservedReadiness() throws {
-    let result = Doctor(system: FixedSystem()).run(operationID: "doctor-1")
+    let result = Doctor(
+        system: FixedSystem(),
+        midiEndpoints: FixedMIDIEndpoints()
+    ).run(operationID: "doctor-1")
 
     #expect(result.protocolVersion == "1.0.0")
     #expect(result.operationID == "doctor-1")
@@ -29,11 +40,27 @@ func doctorReportsObservedReadiness() throws {
         "system.macos",
         "logic.application",
         "permission.accessibility",
+        "midi.virtual_endpoints",
     ])
     #expect(result.data.checks[1].status == .passed)
     #expect(result.data.checks[1].summary == "Logic Pro 12.3 is installed and running")
     #expect(result.data.checks[2].status == .warning)
     #expect(result.data.checks[2].remediation != nil)
+    #expect(result.data.checks[3].status == .passed)
+    #expect(result.data.checks[3].summary == "CoreMIDI MIDI 1.0 source and destination are available")
+    #expect(result.data.checks[3].evidence.first?.value == .object([
+        "protocol": .string("MIDI 1.0 UMP"),
+        "source": .object([
+            "name": .string("Logic LLM Connector Out"),
+            "uniqueId": .number(Double(0x4C4C_4D01)),
+            "available": .bool(true),
+        ]),
+        "destination": .object([
+            "name": .string("Logic LLM Connector In"),
+            "uniqueId": .number(Double(0x4C4C_4D02)),
+            "available": .bool(true),
+        ]),
+    ]))
     #expect(!result.evidence.isEmpty)
 
     let encoded = try JSONEncoder.bridge.encode(result)

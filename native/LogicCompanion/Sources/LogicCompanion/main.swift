@@ -160,6 +160,13 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
     }
 
     @objc private func refreshStatus() {
+        do {
+            try midiOwner.ensureAvailable()
+        } catch {
+            FileHandle.standardError.write(
+                Data("logic-companion: failed to recover virtual MIDI endpoints: \(error)\n".utf8)
+            )
+        }
         let presentation = CompanionStatusPresentation.make(
             connection: connectionStatus,
             logicRunning: systemObserver.logicApplication.running,
@@ -222,7 +229,10 @@ private let midiOwner: VirtualMIDIEndpointOwner = {
     }
 }()
 private let router = BridgeRouter(
-    doctor: Doctor(system: MacSystemObserver()),
+    doctor: Doctor(
+        system: MacSystemObserver(),
+        midiEndpoints: midiOwner
+    ),
     diagnosticsEnabled: diagnosticsEnabled
 )
 private let application = NSApplication.shared

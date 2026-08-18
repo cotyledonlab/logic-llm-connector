@@ -92,6 +92,28 @@ struct VirtualMIDIEndpointOwnerTests {
         #expect(destinationMessages.values == [incoming])
         #expect(queueMarker.wasObserved.value)
     }
+
+    @Test("removed virtual MIDI endpoints are reported and recreated")
+    func removedEndpointsAreReportedAndRecreated() throws {
+        let owner = try VirtualMIDIEndpointOwner()
+        let source = try #require(findMIDIObject(
+            uniqueID: VirtualMIDIEndpointIdentity.source.uniqueID
+        ))
+        let destination = try #require(findMIDIObject(
+            uniqueID: VirtualMIDIEndpointIdentity.destination.uniqueID
+        ))
+
+        #expect(MIDIEndpointDispose(MIDIEndpointRef(source.reference)) == noErr)
+        #expect(MIDIEndpointDispose(MIDIEndpointRef(destination.reference)) == noErr)
+        #expect(!owner.snapshot.sourceAvailable)
+        #expect(!owner.snapshot.destinationAvailable)
+
+        let recovered = try owner.ensureAvailable()
+        #expect(recovered.sourceAvailable)
+        #expect(recovered.destinationAvailable)
+        #expect(findMIDIObject(uniqueID: VirtualMIDIEndpointIdentity.source.uniqueID) != nil)
+        #expect(findMIDIObject(uniqueID: VirtualMIDIEndpointIdentity.destination.uniqueID) != nil)
+    }
 }
 
 private func findMIDIObject(uniqueID: MIDIUniqueID) -> (reference: MIDIObjectRef, type: MIDIObjectType)? {

@@ -42,6 +42,10 @@ public struct VirtualMIDIEndpointSnapshot: Sendable, Equatable {
     }
 }
 
+public protocol VirtualMIDIEndpointObserving: Sendable {
+    var snapshot: VirtualMIDIEndpointSnapshot { get }
+}
+
 public struct MIDIMessage: Sendable, Equatable {
     public let timestamp: MIDITimeStamp
     public let words: [UInt32]
@@ -66,7 +70,10 @@ public struct VirtualMIDIEndpointError: Error, Sendable, Equatable, CustomString
     }
 }
 
-public final class VirtualMIDIEndpointOwner: @unchecked Sendable {
+public final class VirtualMIDIEndpointOwner: VirtualMIDIEndpointObserving, @unchecked Sendable {
+    private let lock = NSLock()
+    private let receiveQueue: DispatchQueue
+    private let onReceive: @Sendable ([MIDIMessage]) -> Void
     private var client = MIDIClientRef()
     private var source = MIDIEndpointRef()
     private var destination = MIDIEndpointRef()
@@ -78,6 +85,8 @@ public final class VirtualMIDIEndpointOwner: @unchecked Sendable {
         ),
         onReceive: @escaping @Sendable ([MIDIMessage]) -> Void = { _ in }
     ) throws {
+        self.receiveQueue = receiveQueue
+        self.onReceive = onReceive
         try check(
             MIDIClientCreateWithBlock(
                 VirtualMIDIEndpointIdentity.clientName as CFString,
@@ -88,7 +97,7 @@ public final class VirtualMIDIEndpointOwner: @unchecked Sendable {
         )
 
         do {
-            try createEndpoints(receiveQueue: receiveQueue, onReceive: onReceive)
+            try createEndpoints()
         } catch {
             MIDIClientDispose(client)
             client = MIDIClientRef()
@@ -103,6 +112,31 @@ public final class VirtualMIDIEndpointOwner: @unchecked Sendable {
     }
 
     public var snapshot: VirtualMIDIEndpointSnapshot {
+        lock.withLock { snapshotWithoutLocking() }
+    }
+
+    @discardableResult
+    public func ensureAvailable() throws -> VirtualMIDIEndpointSnapshot {
+        try lock.withLock {
+            if !endpointIsAvailable(
+                source,
+                uniqueID: VirtualMIDIEndpointIdentity.source.uniqueID
+            ) {
+                source = MIDIEndpointRef()
+                try createSource()
+            }
+            if !endpointIsAvailable(
+                destination,
+                uniqueID: VirtualMIDIEndpointIdentity.destination.uniqueID
+            ) {
+                destination = MIDIEndpointRef()
+                try createDestination()
+            }
+            return snapshotWithoutLocking()
+        }
+    }
+
+    private func snapshotWithoutLocking() -> VirtualMIDIEndpointSnapshot {
         VirtualMIDIEndpointSnapshot(
             sourceAvailable: endpointIsAvailable(
                 source,
@@ -124,31 +158,42 @@ public final class VirtualMIDIEndpointOwner: @unchecked Sendable {
             )
         }
 
-        var eventList = MIDIEventList()
-        let status = withUnsafeMutablePointer(to: &eventList) { eventListPointer in
-            let packet = MIDIEventListInit(
-                eventListPointer,
-                VirtualMIDIEndpointIdentity.protocolID
-            )
-            message.words.withUnsafeBufferPointer { words in
-                _ = MIDIEventListAdd(
+        try lock.withLock {
+            var eventList = MIDIEventList()
+            let status = withUnsafeMutablePointer(to: &eventList) { eventListPointer in
+                let packet = MIDIEventListInit(
                     eventListPointer,
-                    MemoryLayout<MIDIEventList>.size,
-                    packet,
-                    message.timestamp,
-                    words.count,
-                    words.baseAddress!
+                    VirtualMIDIEndpointIdentity.protocolID
                 )
+                message.words.withUnsafeBufferPointer { words in
+                    _ = MIDIEventListAdd(
+                        eventListPointer,
+                        MemoryLayout<MIDIEventList>.size,
+                        packet,
+                        message.timestamp,
+                        words.count,
+                        words.baseAddress!
+                    )
+                }
+                return MIDIReceivedEventList(source, eventListPointer)
             }
-            return MIDIReceivedEventList(source, eventListPointer)
+            try check(status, operation: "source send")
         }
-        try check(status, operation: "source send")
     }
 
-    private func createEndpoints(
-        receiveQueue: DispatchQueue,
-        onReceive: @escaping @Sendable ([MIDIMessage]) -> Void
-    ) throws {
+    private func createEndpoints() throws {
+        try createSource()
+
+        do {
+            try createDestination()
+        } catch {
+            MIDIEndpointDispose(source)
+            source = MIDIEndpointRef()
+            throw error
+        }
+    }
+
+    private func createSource() throws {
         try check(
             MIDISourceCreateWithProtocol(
                 client,
@@ -158,16 +203,24 @@ public final class VirtualMIDIEndpointOwner: @unchecked Sendable {
             ),
             operation: "source creation"
         )
-
         do {
             try applyIdentity(VirtualMIDIEndpointIdentity.source, to: source)
+        } catch {
+            MIDIEndpointDispose(source)
+            source = MIDIEndpointRef()
+            throw error
+        }
+    }
+
+    private func createDestination() throws {
+        do {
             try check(
                 MIDIDestinationCreateWithProtocol(
                     client,
                     VirtualMIDIEndpointIdentity.destination.name as CFString,
                     VirtualMIDIEndpointIdentity.protocolID,
                     &destination,
-                    { eventList, _ in
+                    { [receiveQueue, onReceive] eventList, _ in
                         let messages = Self.copyMessages(from: eventList)
                         receiveQueue.async {
                             onReceive(messages)
@@ -178,8 +231,6 @@ public final class VirtualMIDIEndpointOwner: @unchecked Sendable {
             )
             try applyIdentity(VirtualMIDIEndpointIdentity.destination, to: destination)
         } catch {
-            MIDIEndpointDispose(source)
-            source = MIDIEndpointRef()
             if destination != MIDIEndpointRef() {
                 MIDIEndpointDispose(destination)
                 destination = MIDIEndpointRef()

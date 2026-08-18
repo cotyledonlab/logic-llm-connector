@@ -34,13 +34,16 @@ public protocol SystemObserving: Sendable {
 
 public struct Doctor: Sendable {
     private let system: any SystemObserving
+    private let midiEndpoints: (any VirtualMIDIEndpointObserving)?
     private let now: @Sendable () -> Date
 
     public init(
         system: any SystemObserving,
+        midiEndpoints: (any VirtualMIDIEndpointObserving)? = nil,
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.system = system
+        self.midiEndpoints = midiEndpoints
         self.now = now
     }
 
@@ -78,7 +81,7 @@ public struct Doctor: Sendable {
             ? "\(logicName) is installed and \(logic.running ? "running" : "not running")"
             : "Logic Pro is not installed at \(logic.path)"
 
-        let checks = [
+        var checks = [
             DoctorCheck(
                 id: "system.macos",
                 status: .passed,
@@ -104,6 +107,44 @@ public struct Doctor: Sendable {
                 evidence: [permissionEvidence]
             ),
         ]
+        var evidence = [systemEvidence, logicEvidence, permissionEvidence]
+
+        if let midi = midiEndpoints?.snapshot {
+            let midiEvidence = Evidence(
+                source: "CoreMIDI",
+                observedAt: startedAt,
+                value: .object([
+                    "protocol": .string(
+                        midi.protocolID == ._1_0 ? "MIDI 1.0 UMP" : "MIDI 2.0 UMP"
+                    ),
+                    "source": .object([
+                        "name": .string(VirtualMIDIEndpointIdentity.source.name),
+                        "uniqueId": .number(Double(VirtualMIDIEndpointIdentity.source.uniqueID)),
+                        "available": .bool(midi.sourceAvailable),
+                    ]),
+                    "destination": .object([
+                        "name": .string(VirtualMIDIEndpointIdentity.destination.name),
+                        "uniqueId": .number(Double(VirtualMIDIEndpointIdentity.destination.uniqueID)),
+                        "available": .bool(midi.destinationAvailable),
+                    ]),
+                ])
+            )
+            let endpointsAvailable = midi.sourceAvailable && midi.destinationAvailable
+            checks.append(
+                DoctorCheck(
+                    id: "midi.virtual_endpoints",
+                    status: endpointsAvailable ? .passed : .warning,
+                    summary: endpointsAvailable
+                        ? "CoreMIDI MIDI 1.0 source and destination are available"
+                        : "One or more CoreMIDI MIDI 1.0 virtual endpoints are unavailable",
+                    remediation: endpointsAvailable
+                        ? nil
+                        : "Keep Logic Companion running while it recreates the virtual MIDI endpoints.",
+                    evidence: [midiEvidence]
+                )
+            )
+            evidence.append(midiEvidence)
+        }
 
         return DoctorResult(
             protocolVersion: bridgeProtocolVersion,
@@ -113,7 +154,7 @@ public struct Doctor: Sendable {
             startedAt: startedAt,
             finishedAt: now(),
             data: DoctorData(checks: checks),
-            evidence: [systemEvidence, logicEvidence, permissionEvidence]
+            evidence: evidence
         )
     }
 }
