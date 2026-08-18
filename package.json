@@ -11,12 +11,14 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:app": "scripts/build-companion-app.sh",
     "build:native": "swift build --package-path native/LogicCompanion",
     "test": "npm run test:contracts && npm run test:mcp && npm run test:native",
     "test:contracts": "node --test tests/contracts/*.test.mjs",
     "test:mcp": "tsx --test tests/mcp/*.test.ts",
     "test:native": "swift test --package-path native/LogicCompanion",
-    "test:integration": "npm run build:native && LOGIC_INTEGRATION_TEST=1 tsx --test tests/integration/*.test.ts",
+    "test:integration": "npm run build:app && LOGIC_INTEGRATION_TEST=1 tsx --test tests/integration/*.test.ts",
+    "test:package": "npm run build:app && node --test tests/package/*.test.mjs",
     "start": "node dist/packages/mcp-server/src/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

@@ -31,6 +31,7 @@ tests.
 ```sh
 npm install
 npm test
+npm run test:package
 npm run test:integration
 ```
 
@@ -47,14 +48,25 @@ through a real MCP stdio client against the running Logic installation.
 - Logic Pro installation, version, build, and running state
 - Accessibility permission status and remediation
 
-Run `npm run build:native`, launch the companion, then run the MCP server:
+Build and launch the signed Companion, then run the MCP server:
 
 ```sh
-native/LogicCompanion/.build/debug/logic-companion \
-  --socket /tmp/logic-llm-connector-$(id -u).sock
+npm run build:app
+open "build/Logic Companion.app"
 npm run build
 npm start
 ```
 
-When using a different path, pass it to the companion and set the same path in
+Both processes default to `/tmp/logic-llm-connector-$(id -u).sock`, which the
+Companion creates with mode `0600`. To use another path, run the packaged
+executable with `--socket <path>` and set the same path in
 `LOGIC_COMPANION_SOCKET` for the MCP server.
+
+The local app build is certificate-signed with the configured Apple Development
+identity, giving macOS a stable designated requirement across rebuilds. Override
+the identity when necessary:
+
+```sh
+LOGIC_COMPANION_SIGNING_IDENTITY="Apple Development: Name (ID)" \
+  scripts/build-companion-app.sh
+```

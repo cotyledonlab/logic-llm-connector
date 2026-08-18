@@ -1,14 +1,21 @@
+import Darwin
 import Foundation
 import LogicBridgeCore
 
-guard CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--socket" else {
+let socketPath: String
+switch CommandLine.arguments.count {
+case 1:
+    socketPath = ProcessInfo.processInfo.environment["LOGIC_COMPANION_SOCKET"]
+        ?? CompanionSocketPath.default(userID: getuid())
+case 3 where CommandLine.arguments[1] == "--socket":
+    socketPath = CommandLine.arguments[2]
+default:
     FileHandle.standardError.write(
-        Data("Usage: logic-companion --socket <path>\n".utf8)
+        Data("Usage: logic-companion [--socket <path>]\n".utf8)
     )
     exit(64)
 }
 
-let socketPath = CommandLine.arguments[2]
 let router = BridgeRouter(doctor: Doctor(system: MacSystemObserver()))
 
 do {

@@ -1,6 +1,6 @@
 # 0005 — Package the signed Companion app
 
-Status: In progress
+Status: Complete
 Depends on: 0004
 
 ## Outcome

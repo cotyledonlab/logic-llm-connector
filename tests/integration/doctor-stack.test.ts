@@ -11,7 +11,7 @@ import { UnixSocketLogicBridge } from "../../packages/mcp-server/src/unix-socket
 
 const companionPath = join(
   process.cwd(),
-  "native/LogicCompanion/.build/debug/logic-companion",
+  "build/Logic Companion.app/Contents/MacOS/logic-companion",
 );
 
 async function waitForSocket(path: string): Promise<void> {
