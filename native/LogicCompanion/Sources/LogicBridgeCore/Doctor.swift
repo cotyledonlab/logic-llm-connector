@@ -35,15 +35,18 @@ public protocol SystemObserving: Sendable {
 public struct Doctor: Sendable {
     private let system: any SystemObserving
     private let midiEndpoints: (any VirtualMIDIEndpointObserving)?
+    private let mackieControl: (any MackieControlConfigurationObserving)?
     private let now: @Sendable () -> Date
 
     public init(
         system: any SystemObserving,
         midiEndpoints: (any VirtualMIDIEndpointObserving)? = nil,
+        mackieControl: (any MackieControlConfigurationObserving)? = nil,
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.system = system
         self.midiEndpoints = midiEndpoints
+        self.mackieControl = mackieControl
         self.now = now
     }
 
@@ -146,6 +149,38 @@ public struct Doctor: Sendable {
             evidence.append(midiEvidence)
         }
 
+        if let configuration = mackieControl?.configuration {
+            let assignmentValues = configuration.assignments.map { assignment in
+                JSONValue.object([
+                    "model": .string(assignment.model),
+                    "inputPort": assignment.inputPort.map(JSONValue.string) ?? .null,
+                    "outputPort": assignment.outputPort.map(JSONValue.string) ?? .null,
+                ])
+            }
+            let mackieEvidence = Evidence(
+                source: "Logic Pro Control Surfaces Setup",
+                observedAt: startedAt,
+                value: .object([
+                    "state": .string(configuration.state.rawValue),
+                    "expectedModel": .string(MackieControlConfigurationClassifier.expectedModel),
+                    "expectedInputPort": .string(MackieControlConfigurationClassifier.expectedInputPort),
+                    "expectedOutputPort": .string(MackieControlConfigurationClassifier.expectedOutputPort),
+                    "assignments": .array(assignmentValues),
+                ])
+            )
+            let presentation = Self.presentation(for: configuration.state)
+            checks.append(
+                DoctorCheck(
+                    id: "logic.control_surface.mackie",
+                    status: presentation.status,
+                    summary: presentation.summary,
+                    remediation: presentation.remediation,
+                    evidence: [mackieEvidence]
+                )
+            )
+            evidence.append(mackieEvidence)
+        }
+
         return DoctorResult(
             protocolVersion: bridgeProtocolVersion,
             operationID: operationID,
@@ -156,5 +191,30 @@ public struct Doctor: Sendable {
             data: DoctorData(checks: checks),
             evidence: evidence
         )
+    }
+
+    private static func presentation(
+        for state: MackieControlConfigurationState
+    ) -> (status: CheckStatus, summary: String, remediation: String?) {
+        switch state {
+        case .missing:
+            return (
+                .warning,
+                "The Logic LLM Connector Mackie Control is not configured",
+                "Follow the Mackie Control setup guide while Logic Companion is running."
+            )
+        case .configured:
+            return (
+                .passed,
+                "Mackie Control is assigned to both Logic LLM Connector MIDI ports",
+                nil
+            )
+        case .conflicting:
+            return (
+                .failed,
+                "Logic LLM Connector MIDI ports have conflicting control-surface assignments",
+                "Remove assignments that split, duplicate, or use the connector ports with a non-Mackie model, then follow the setup guide."
+            )
+        }
     }
 }

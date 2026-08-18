@@ -25,11 +25,25 @@ private struct FixedMIDIEndpoints: VirtualMIDIEndpointObserving {
     )
 }
 
+private struct FixedMackieControl: MackieControlConfigurationObserving {
+    let configuration: MackieControlConfiguration? = MackieControlConfiguration(
+        state: .configured,
+        assignments: [
+            ControlSurfaceAssignment(
+                model: "Mackie Control",
+                inputPort: "Logic LLM Connector Out",
+                outputPort: "Logic LLM Connector In"
+            ),
+        ]
+    )
+}
+
 @Test("doctor reports observed Logic and permission readiness")
 func doctorReportsObservedReadiness() throws {
     let result = Doctor(
         system: FixedSystem(),
-        midiEndpoints: FixedMIDIEndpoints()
+        midiEndpoints: FixedMIDIEndpoints(),
+        mackieControl: FixedMackieControl()
     ).run(operationID: "doctor-1")
 
     #expect(result.protocolVersion == "1.0.0")
@@ -41,6 +55,7 @@ func doctorReportsObservedReadiness() throws {
         "logic.application",
         "permission.accessibility",
         "midi.virtual_endpoints",
+        "logic.control_surface.mackie",
     ])
     #expect(result.data.checks[1].status == .passed)
     #expect(result.data.checks[1].summary == "Logic Pro 12.3 is installed and running")
@@ -59,6 +74,21 @@ func doctorReportsObservedReadiness() throws {
             "name": .string("Logic LLM Connector In"),
             "uniqueId": .number(Double(0x4C4C_4D02)),
             "available": .bool(true),
+        ]),
+    ]))
+    #expect(result.data.checks[4].status == .passed)
+    #expect(result.data.checks[4].summary == "Mackie Control is assigned to both Logic LLM Connector MIDI ports")
+    #expect(result.data.checks[4].evidence.first?.value == .object([
+        "state": .string("configured"),
+        "expectedModel": .string("Mackie Control"),
+        "expectedInputPort": .string("Logic LLM Connector Out"),
+        "expectedOutputPort": .string("Logic LLM Connector In"),
+        "assignments": .array([
+            .object([
+                "model": .string("Mackie Control"),
+                "inputPort": .string("Logic LLM Connector Out"),
+                "outputPort": .string("Logic LLM Connector In"),
+            ]),
         ]),
     ]))
     #expect(!result.evidence.isEmpty)
