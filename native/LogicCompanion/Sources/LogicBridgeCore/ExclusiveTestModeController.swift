@@ -11,6 +11,19 @@ public enum ExclusiveTestModeStopReason: String, Sendable, Equatable {
     case timedOut
 }
 
+public enum ExclusiveTestModePauseReason: String, Sendable, Equatable {
+    case user
+    case focusLost
+    case unexpectedModal
+    case humanInput
+}
+
+public enum AutomationSafetyInterruption: Sendable, Equatable {
+    case focusLost
+    case unexpectedModal
+    case humanInput
+}
+
 public struct ExclusiveTestModeReadiness: Sendable, Equatable {
     public let accessibilityReady: Bool
     public let testProjectPolicyContext: Bool
@@ -24,6 +37,7 @@ public struct ExclusiveTestModeReadiness: Sendable, Equatable {
 public struct ExclusiveTestModeSnapshot: Sendable, Equatable {
     public let phase: ExclusiveTestModePhase
     public let deadline: Date?
+    public let pauseReason: ExclusiveTestModePauseReason?
     public let stopReason: ExclusiveTestModeStopReason?
 }
 
@@ -35,15 +49,15 @@ public enum ExclusiveTestModeError: Error, Equatable {
 }
 
 public protocol ExclusiveTestModeExpirationScheduling: Sendable {
-    func schedule(at deadline: Date, action: @escaping @Sendable () -> Void)
+    func schedule(after duration: TimeInterval, action: @escaping @Sendable () -> Void)
 }
 
 public struct DispatchExpirationScheduler: ExclusiveTestModeExpirationScheduling {
     public init() {}
 
-    public func schedule(at deadline: Date, action: @escaping @Sendable () -> Void) {
+    public func schedule(after duration: TimeInterval, action: @escaping @Sendable () -> Void) {
         DispatchQueue.global(qos: .userInitiated).asyncAfter(
-            deadline: .now() + max(0, deadline.timeIntervalSinceNow),
+            deadline: .now() + duration,
             execute: action
         )
     }
@@ -58,6 +72,7 @@ public final class ExclusiveTestModeController: @unchecked Sendable {
     private var currentSnapshot = ExclusiveTestModeSnapshot(
         phase: .inactive,
         deadline: nil,
+        pauseReason: nil,
         stopReason: nil
     )
     private var pendingOperations: [String: () -> Void] = [:]
@@ -98,11 +113,12 @@ public final class ExclusiveTestModeController: @unchecked Sendable {
             currentSnapshot = ExclusiveTestModeSnapshot(
                 phase: .active,
                 deadline: deadline,
+                pauseReason: nil,
                 stopReason: nil
             )
             return generation
         }
-        expirationScheduler.schedule(at: deadline) { [weak self] in
+        expirationScheduler.schedule(after: duration) { [weak self] in
             self?.expire(generation: activationGeneration)
         }
     }
@@ -119,6 +135,7 @@ public final class ExclusiveTestModeController: @unchecked Sendable {
             currentSnapshot = ExclusiveTestModeSnapshot(
                 phase: .paused,
                 deadline: currentSnapshot.deadline,
+                pauseReason: .user,
                 stopReason: nil
             )
         }
@@ -132,6 +149,7 @@ public final class ExclusiveTestModeController: @unchecked Sendable {
             currentSnapshot = ExclusiveTestModeSnapshot(
                 phase: .active,
                 deadline: currentSnapshot.deadline,
+                pauseReason: nil,
                 stopReason: nil
             )
         }
@@ -141,12 +159,34 @@ public final class ExclusiveTestModeController: @unchecked Sendable {
         stop(reason: .emergencyStop)
     }
 
+    public func observe(_ interruption: AutomationSafetyInterruption) {
+        let pauseReason: ExclusiveTestModePauseReason = switch interruption {
+        case .focusLost: .focusLost
+        case .unexpectedModal: .unexpectedModal
+        case .humanInput: .humanInput
+        }
+        let cancellations = lock.withLock {
+            guard currentSnapshot.phase == .active else { return [() -> Void]() }
+            currentSnapshot = ExclusiveTestModeSnapshot(
+                phase: .paused,
+                deadline: currentSnapshot.deadline,
+                pauseReason: pauseReason,
+                stopReason: nil
+            )
+            let callbacks = Array(pendingOperations.values)
+            pendingOperations.removeAll()
+            return callbacks
+        }
+        cancellations.forEach { $0() }
+    }
+
     private func stop(reason: ExclusiveTestModeStopReason) {
         let cancellations = lock.withLock {
             generation += 1
             currentSnapshot = ExclusiveTestModeSnapshot(
                 phase: .inactive,
                 deadline: nil,
+                pauseReason: nil,
                 stopReason: reason
             )
             let callbacks = Array(pendingOperations.values)
@@ -164,6 +204,7 @@ public final class ExclusiveTestModeController: @unchecked Sendable {
             currentSnapshot = ExclusiveTestModeSnapshot(
                 phase: .inactive,
                 deadline: nil,
+                pauseReason: nil,
                 stopReason: .timedOut
             )
             let callbacks = Array(pendingOperations.values)

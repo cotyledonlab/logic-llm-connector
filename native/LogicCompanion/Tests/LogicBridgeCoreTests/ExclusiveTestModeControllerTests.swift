@@ -7,7 +7,7 @@ private final class ManualExpirationScheduler: ExclusiveTestModeExpirationSchedu
     private let lock = NSLock()
     private var scheduled: (@Sendable () -> Void)?
 
-    func schedule(at deadline: Date, action: @escaping @Sendable () -> Void) {
+    func schedule(after duration: TimeInterval, action: @escaping @Sendable () -> Void) {
         lock.withLock { scheduled = action }
     }
 
@@ -21,7 +21,10 @@ private final class ManualExpirationScheduler: ExclusiveTestModeExpirationSchedu
 func exclusiveTestModeTransitions() throws {
     let startedAt = Date(timeIntervalSince1970: 1_000)
     var cancelledOperationIDs: [String] = []
-    let controller = ExclusiveTestModeController(now: { startedAt })
+    let controller = ExclusiveTestModeController(
+        now: { startedAt },
+        expirationScheduler: ManualExpirationScheduler()
+    )
 
     #expect(controller.snapshot.phase == .inactive)
 
@@ -102,4 +105,27 @@ func exclusiveTestModeReadinessAndExpiration() throws {
     #expect(controller.snapshot.phase == .inactive)
     #expect(controller.snapshot.stopReason == .timedOut)
     #expect(controller.snapshot.deadline == nil)
+}
+
+@Test("focus loss pauses test mode and cancels in-flight UI work")
+func exclusiveTestModeObservesFocusLoss() throws {
+    let controller = ExclusiveTestModeController()
+    var cancelled = false
+    try controller.activate(
+        duration: 60,
+        readiness: ExclusiveTestModeReadiness(
+            accessibilityReady: true,
+            testProjectPolicyContext: true
+        )
+    )
+    controller.registerPendingOperation(id: "operation-1") {
+        cancelled = true
+    }
+
+    controller.observe(.focusLost)
+
+    #expect(controller.snapshot.phase == .paused)
+    #expect(controller.snapshot.pauseReason == .focusLost)
+    #expect(!controller.canBeginUIOperation)
+    #expect(cancelled)
 }
