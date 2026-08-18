@@ -47,6 +47,9 @@ test("an MCP client can diagnose Logic readiness", async (t) => {
         ],
       };
     },
+    async inspectUI() {
+      throw new Error("UI inspection is not used in this test");
+    },
   };
 
   const server = createLogicMcpServer({ bridge, createOperationId: () => "op-1" });
@@ -85,4 +88,111 @@ test("an MCP client can diagnose Logic readiness", async (t) => {
     ],
   });
   assert.deepEqual(calls, [{ protocolVersion: "1.0.0", operationId: "op-1" }]);
+});
+
+test("UI inspection is absent by default and available only when enabled", async (t) => {
+  const calls: unknown[] = [];
+  const bridge: LogicBridge = {
+    async doctor() {
+      throw new Error("doctor is not used in this test");
+    },
+    async inspectUI(request) {
+      calls.push(request);
+      const timestamp = "2026-08-18T10:00:00.000Z";
+      return {
+        protocolVersion: "1.0.0",
+        operationId: request.operationId,
+        status: "succeeded",
+        reliability: "verified_deterministic",
+        startedAt: timestamp,
+        finishedAt: timestamp,
+        data: {
+          application: { bundleIdentifier: "com.apple.logic10", pid: 42 },
+          capturedAt: timestamp,
+          limits: { maxDepth: request.maxDepth, maxNodes: request.maxNodes },
+          truncated: false,
+          nodes: [
+            {
+              id: "node-0",
+              parentId: null,
+              role: "AXApplication",
+              subrole: null,
+              identifier: null,
+              enabled: true,
+              focused: false,
+              childCount: 1,
+            },
+          ],
+        },
+        evidence: [
+          {
+            source: "AXUIElement",
+            observedAt: timestamp,
+            value: { nodeCount: 1, truncated: false },
+          },
+        ],
+      };
+    },
+  };
+  const disabledServer = createLogicMcpServer({
+    bridge,
+    createOperationId: () => "inspect-disabled",
+  });
+  const [disabledClientTransport, disabledServerTransport] =
+    InMemoryTransport.createLinkedPair();
+  const disabledClient = new Client({ name: "disabled-client", version: "1.0.0" });
+  await disabledServer.connect(disabledServerTransport);
+  await disabledClient.connect(disabledClientTransport);
+  assert.deepEqual((await disabledClient.listTools()).tools.map((tool) => tool.name), [
+    "logic_doctor",
+  ]);
+  await disabledClient.close();
+  await disabledServer.close();
+
+  const server = createLogicMcpServer({
+    bridge,
+    createOperationId: () => "inspect-1",
+    diagnosticsEnabled: true,
+  });
+  const client = new Client({ name: "enabled-client", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  t.after(async () => {
+    await client.close();
+    await server.close();
+  });
+
+  assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), [
+    "logic_doctor",
+    "logic_inspect_ui",
+  ]);
+  const result = await client.callTool({
+    name: "logic_inspect_ui",
+    arguments: { maxDepth: 2, maxNodes: 50 },
+  });
+  assert.equal(result.isError, undefined);
+  const structuredContent = result.structuredContent as
+    | Record<string, unknown>
+    | undefined;
+  assert.deepEqual(structuredContent?.["nodes"], [
+    {
+      id: "node-0",
+      parentId: null,
+      role: "AXApplication",
+      subrole: null,
+      identifier: null,
+      enabled: true,
+      focused: false,
+      childCount: 1,
+    },
+  ]);
+  assert.deepEqual(calls, [
+    {
+      protocolVersion: "1.0.0",
+      operationId: "inspect-1",
+      maxDepth: 2,
+      maxNodes: 50,
+    },
+  ]);
 });

@@ -6,11 +6,13 @@ import { UnixSocketLogicBridge } from "./unix-socket-bridge.js";
 const socketPath =
   process.env.LOGIC_COMPANION_SOCKET ??
   `/tmp/logic-llm-connector-${process.getuid?.() ?? process.pid}.sock`;
+const diagnosticsEnabled = process.env.LOGIC_ENABLE_DIAGNOSTICS === "1";
 
 serveStdio(
   () =>
     createLogicMcpServer({
       bridge: new UnixSocketLogicBridge({ socketPath }),
+      diagnosticsEnabled,
     }),
   {
     onerror(error) {

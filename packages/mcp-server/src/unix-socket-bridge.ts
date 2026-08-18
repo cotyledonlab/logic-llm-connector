@@ -1,6 +1,10 @@
 import { createConnection } from "node:net";
 
-import type { DoctorResult, LogicBridge } from "./server.js";
+import type {
+  AXInspectionResult,
+  DoctorResult,
+  LogicBridge,
+} from "./server.js";
 
 export interface UnixSocketLogicBridgeOptions {
   socketPath: string;
@@ -20,6 +24,19 @@ export class UnixSocketLogicBridge implements LogicBridge {
     protocolVersion: "1.0.0";
     operationId: string;
   }): Promise<DoctorResult> {
+    return this.#request("logic.doctor", request);
+  }
+
+  inspectUI(request: {
+    protocolVersion: "1.0.0";
+    operationId: string;
+    maxDepth: number;
+    maxNodes: number;
+  }): Promise<AXInspectionResult> {
+    return this.#request("logic.inspectUI", request);
+  }
+
+  #request<Result>(method: string, params: object): Promise<Result> {
     return new Promise((resolve, reject) => {
       const socket = createConnection(this.#socketPath);
       let buffer = "";
@@ -41,9 +58,9 @@ export class UnixSocketLogicBridge implements LogicBridge {
         socket.write(
           `${JSON.stringify({
             jsonrpc: "2.0",
-            id: request.operationId,
-            method: "logic.doctor",
-            params: request,
+            id: "operationId" in params ? params.operationId : "bridge-request",
+            method,
+            params,
           })}\n`,
         );
       });
@@ -54,7 +71,7 @@ export class UnixSocketLogicBridge implements LogicBridge {
 
         try {
           const response = JSON.parse(buffer.slice(0, newline)) as {
-            result?: DoctorResult;
+            result?: Result;
             error?: { code: number; message: string };
           };
           if (response.error) {

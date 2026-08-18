@@ -11,7 +11,8 @@ passes and the result is committed and pushed.
 | [0003](0003-native-doctor.md) | Complete | Native readiness observations |
 | [0004](0004-full-stack-doctor.md) | Complete | Real-Logic MCP-to-Swift tracer bullet |
 | [0005](0005-package-companion-app.md) | Complete | Signed Companion with stable identity |
-| [0006](0006-test-safety-and-ax-inspection.md) | Next | Exclusive Test Mode and safe AX snapshot |
+| [0006](0006-test-safety-and-ax-inspection.md) | Complete | Permission and safe AX snapshot |
+| [0006b](0006b-exclusive-test-mode.md) | Next | Visible status and Exclusive Test Mode |
 | [0007](0007-virtual-midi-endpoint.md) | Pending | Persistent CoreMIDI virtual endpoint |
 | [0008](0008-mackie-onboarding.md) | Pending | Repeatable Logic control-surface setup |
 | [0009](0009-verified-transport.md) | Pending | Play/stop/location with feedback |

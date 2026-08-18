@@ -37,6 +37,62 @@ public struct AXNodeSnapshot: Codable, Sendable, Equatable {
         case focused
         case childCount
     }
+
+    public init(
+        id: String,
+        parentID: String?,
+        role: String,
+        subrole: String?,
+        identifier: String?,
+        enabled: Bool?,
+        focused: Bool?,
+        childCount: Int
+    ) {
+        self.id = id
+        self.parentID = parentID
+        self.role = role
+        self.subrole = subrole
+        self.identifier = identifier
+        self.enabled = enabled
+        self.focused = focused
+        self.childCount = childCount
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        parentID = try container.decodeIfPresent(String.self, forKey: .parentID)
+        role = try container.decode(String.self, forKey: .role)
+        subrole = try container.decodeIfPresent(String.self, forKey: .subrole)
+        identifier = try container.decodeIfPresent(String.self, forKey: .identifier)
+        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled)
+        focused = try container.decodeIfPresent(Bool.self, forKey: .focused)
+        childCount = try container.decode(Int.self, forKey: .childCount)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try encodeNullable(parentID, to: &container, forKey: .parentID)
+        try container.encode(role, forKey: .role)
+        try encodeNullable(subrole, to: &container, forKey: .subrole)
+        try encodeNullable(identifier, to: &container, forKey: .identifier)
+        try encodeNullable(enabled, to: &container, forKey: .enabled)
+        try encodeNullable(focused, to: &container, forKey: .focused)
+        try container.encode(childCount, forKey: .childCount)
+    }
+
+    private func encodeNullable<Value: Encodable>(
+        _ value: Value?,
+        to container: inout KeyedEncodingContainer<CodingKeys>,
+        forKey key: CodingKeys
+    ) throws {
+        if let value {
+            try container.encode(value, forKey: key)
+        } else {
+            try container.encodeNil(forKey: key)
+        }
+    }
 }
 
 public struct AXSnapshotData: Codable, Sendable, Equatable {
@@ -47,13 +103,39 @@ public struct AXSnapshotData: Codable, Sendable, Equatable {
     public let nodes: [AXNodeSnapshot]
 }
 
+public struct AXInspectionResult: Codable, Sendable, Equatable {
+    public let protocolVersion: String
+    public let operationID: String
+    public let status: OperationStatus
+    public let reliability: Reliability
+    public let startedAt: Date
+    public let finishedAt: Date
+    public let data: AXSnapshotData
+    public let evidence: [Evidence]
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion
+        case operationID = "operationId"
+        case status
+        case reliability
+        case startedAt
+        case finishedAt
+        case data
+        case evidence
+    }
+}
+
 public enum AXSnapshotError: Error, Equatable {
     case accessibilityNotTrusted
     case logicNotRunning
     case invalidLimits
 }
 
-public struct MacLogicAXSnapshotter {
+public protocol LogicAXSnapshotting: Sendable {
+    func capture(limits: AXSnapshotLimits) throws -> AXSnapshotData
+}
+
+public struct MacLogicAXSnapshotter: LogicAXSnapshotting {
     private let bundleIdentifier = "com.apple.logic10"
 
     public init() {}

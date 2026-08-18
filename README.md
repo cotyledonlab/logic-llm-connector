@@ -48,6 +48,11 @@ through a real MCP stdio client against the running Logic installation.
 - Logic Pro installation, version, build, and running state
 - Accessibility permission status and remediation
 
+`logic_inspect_ui` is a restricted diagnostic tool. It is absent unless both
+the Companion and MCP server start with `LOGIC_ENABLE_DIAGNOSTICS=1`. Its
+bounded snapshot contains UI roles, identifiers, focus flags, and child counts,
+but deliberately excludes titles, values, descriptions, and UI actions.
+
 Build and launch the signed Companion, then run the MCP server:
 
 ```sh

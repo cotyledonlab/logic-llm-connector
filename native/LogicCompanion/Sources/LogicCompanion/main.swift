@@ -16,7 +16,11 @@ default:
     exit(64)
 }
 
-let router = BridgeRouter(doctor: Doctor(system: MacSystemObserver()))
+let diagnosticsEnabled = ProcessInfo.processInfo.environment["LOGIC_ENABLE_DIAGNOSTICS"] == "1"
+let router = BridgeRouter(
+    doctor: Doctor(system: MacSystemObserver()),
+    diagnosticsEnabled: diagnosticsEnabled
+)
 
 do {
     try UnixSocketServer(path: socketPath, router: router).run()

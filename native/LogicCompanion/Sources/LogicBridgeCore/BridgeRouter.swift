@@ -4,6 +4,7 @@ public enum BridgeRouterError: Error, Equatable {
     case invalidJSONRPCVersion(String)
     case unsupportedProtocolVersion(String)
     case unsupportedMethod(String)
+    case diagnosticsDisabled
 }
 
 public enum JSONRPCID: Codable, Sendable, Equatable {
@@ -38,6 +39,12 @@ private struct DoctorParameters: Codable {
     }
 }
 
+private struct RequestEnvelope: Codable {
+    let jsonrpc: String
+    let id: JSONRPCID
+    let method: String
+}
+
 private struct DoctorRequest: Codable {
     let jsonrpc: String
     let id: JSONRPCID
@@ -45,37 +52,120 @@ private struct DoctorRequest: Codable {
     let params: DoctorParameters
 }
 
-private struct DoctorResponse: Codable {
+private struct InspectUIParameters: Codable {
+    let protocolVersion: String
+    let operationID: String
+    let maxDepth: Int
+    let maxNodes: Int
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion
+        case operationID = "operationId"
+        case maxDepth
+        case maxNodes
+    }
+}
+
+private struct InspectUIRequest: Codable {
     let jsonrpc: String
     let id: JSONRPCID
-    let result: DoctorResult
+    let method: String
+    let params: InspectUIParameters
+}
+
+private struct JSONRPCResponse<Result: Codable>: Codable {
+    let jsonrpc: String
+    let id: JSONRPCID
+    let result: Result
 }
 
 public struct BridgeRouter: Sendable {
     private let doctor: Doctor
+    private let axSnapshotter: any LogicAXSnapshotting
+    private let diagnosticsEnabled: Bool
+    private let now: @Sendable () -> Date
 
-    public init(doctor: Doctor) {
+    public init(
+        doctor: Doctor,
+        axSnapshotter: any LogicAXSnapshotting = MacLogicAXSnapshotter(),
+        diagnosticsEnabled: Bool = false,
+        now: @escaping @Sendable () -> Date = Date.init
+    ) {
         self.doctor = doctor
+        self.axSnapshotter = axSnapshotter
+        self.diagnosticsEnabled = diagnosticsEnabled
+        self.now = now
     }
 
     public func handle(_ data: Data) throws -> Data {
-        let request = try JSONDecoder().decode(DoctorRequest.self, from: data)
-        guard request.jsonrpc == "2.0" else {
-            throw BridgeRouterError.invalidJSONRPCVersion(request.jsonrpc)
-        }
-        guard request.params.protocolVersion == bridgeProtocolVersion else {
-            throw BridgeRouterError.unsupportedProtocolVersion(request.params.protocolVersion)
-        }
-        guard request.method == "logic.doctor" else {
-            throw BridgeRouterError.unsupportedMethod(request.method)
+        let envelope = try JSONDecoder().decode(RequestEnvelope.self, from: data)
+        guard envelope.jsonrpc == "2.0" else {
+            throw BridgeRouterError.invalidJSONRPCVersion(envelope.jsonrpc)
         }
 
+        switch envelope.method {
+        case "logic.doctor":
+            return try routeDoctor(data)
+        case "logic.inspectUI":
+            return try routeInspectUI(data)
+        default:
+            throw BridgeRouterError.unsupportedMethod(envelope.method)
+        }
+    }
+
+    private func routeDoctor(_ data: Data) throws -> Data {
+        let request = try JSONDecoder().decode(DoctorRequest.self, from: data)
+        try validateProtocolVersion(request.params.protocolVersion)
         return try JSONEncoder.bridge.encode(
-            DoctorResponse(
+            JSONRPCResponse(
                 jsonrpc: "2.0",
                 id: request.id,
                 result: doctor.run(operationID: request.params.operationID)
             )
         )
+    }
+
+    private func routeInspectUI(_ data: Data) throws -> Data {
+        guard diagnosticsEnabled else { throw BridgeRouterError.diagnosticsDisabled }
+        let request = try JSONDecoder().decode(InspectUIRequest.self, from: data)
+        try validateProtocolVersion(request.params.protocolVersion)
+        let startedAt = now()
+        let snapshot = try axSnapshotter.capture(
+            limits: AXSnapshotLimits(
+                maxDepth: request.params.maxDepth,
+                maxNodes: request.params.maxNodes
+            )
+        )
+        let evidence = Evidence(
+            source: "AXUIElement",
+            observedAt: snapshot.capturedAt,
+            value: .object([
+                "nodeCount": .number(Double(snapshot.nodes.count)),
+                "truncated": .bool(snapshot.truncated),
+            ])
+        )
+
+        return try JSONEncoder.bridge.encode(
+            JSONRPCResponse(
+                jsonrpc: "2.0",
+                id: request.id,
+                result: AXInspectionResult(
+                    protocolVersion: bridgeProtocolVersion,
+                    operationID: request.params.operationID,
+                    status: .succeeded,
+                    reliability: .verifiedDeterministic,
+                    startedAt: startedAt,
+                    finishedAt: now(),
+                    data: snapshot,
+                    evidence: [evidence]
+                )
+            )
+        )
+    }
+
+    private func validateProtocolVersion(_ version: String) throws {
+        guard version == bridgeProtocolVersion else {
+            throw BridgeRouterError.unsupportedProtocolVersion(version)
+        }
     }
 }

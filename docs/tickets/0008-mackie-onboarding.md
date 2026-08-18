@@ -1,7 +1,7 @@
 # 0008 — Onboard virtual Mackie Control
 
 Status: Pending
-Depends on: 0006, 0007
+Depends on: 0006b, 0007
 
 ## Outcome
 

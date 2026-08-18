@@ -1,7 +1,7 @@
 # 0010 — Implement Test Project lifecycle
 
 Status: Pending
-Depends on: 0006, 0009
+Depends on: 0006b, 0009
 
 ## Outcome
 
