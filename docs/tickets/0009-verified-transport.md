@@ -39,5 +39,26 @@ The first verified vertical slice is complete and pushed:
 - Packaged MCP-to-Swift acceptance verifies play and stop while Finder is
   frontmost and restores the original play state in a `finally` block.
 
-Location navigation and its restorable real-Logic acceptance test remain before
-this ticket can be marked complete.
+Deterministic location verification and its restorable real-Logic acceptance
+test remain before this ticket can be marked complete.
+
+## Location investigation
+
+The location transport seam and public `logic_move_playhead` tool are pushed,
+but they are not accepted as deterministic. The Companion decodes Mackie
+position-display controllers `0x40...0x49`; Logic uses both NUL and space
+characters to blank-pad that display, and both are now normalized to zero.
+
+Real-Logic acceptance exposed two unresolved problems:
+
+- Logic sends one full display sweep followed by sparse character updates, so a
+  quiet period does not prove that the accumulated display is coherent.
+- Equal and opposite jog-wheel messages did not reliably restore the exact
+  initial position. One captured sequence was
+  `0010101006 → 0010101001 → 0020101001`.
+
+A tested 300 ms quiet-period heuristic still returned the wrong restoration
+position and was removed. The exact-restoration acceptance block remains
+uncommitted until a protocol-grounded postcondition and reversible locate
+strategy are available. The current operation's directional display comparison
+must not be considered sufficient real-Logic verification.

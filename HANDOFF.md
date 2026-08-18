@@ -4,7 +4,7 @@
 
 - Repository: `cotyledonlab/logic-llm-connector` (private)
 - Branch: `main`
-- Last completed implementation commit: `4805724`
+- Last completed implementation commit: `dfddb3a`
 - Last completed acceptance commit: `6a4a495`
 - Specification: [`SPEC.md`](SPEC.md)
 - Delivery status: [`docs/tickets/README.md`](docs/tickets/README.md)
@@ -36,12 +36,18 @@ feedback observes the requested state; already-observed states are idempotent.
 Endpoint failures, dispatch errors, and feedback timeouts have explicit
 outcomes.
 
+An experimental location slice is also pushed: `logic_move_playhead` sends
+Mackie jog-wheel messages and observes the ten-character Mackie position
+display. Blank-padded display characters are normalized to zero. This slice is
+not accepted against real Logic and must not yet be treated as deterministic.
+
 Packaged acceptance exercised stop, focus-independent play with Finder
 frontmost, resource observation, stop, and restoration of the original play
 state. The open Logic project was not edited or saved.
 
-Ticket 0009 remains in progress because location navigation and its restorable
-real-Logic acceptance test are not implemented yet.
+Ticket 0009 remains in progress because real-Logic testing showed that the
+current location postcondition and inverse-jog restoration strategy are not
+reliable.
 
 ### Exclusive Test Mode
 
@@ -161,10 +167,19 @@ running Logic installation through the packaged Companion.
 
 Continue [`0009 — Verified transport`](docs/tickets/0009-verified-transport.md).
 
-The next red→green slice is location navigation. Decode the Mackie position
-display or another deterministic position feedback mechanism, define a bounded
-rewind/locate contract, and ensure real-Logic acceptance can restore the exact
-original location before marking the ticket complete.
+The next red→green slice is deterministic location navigation. A real-Logic
+acceptance attempt proved that waiting 300 ms after the latest display update
+does not establish a coherent or restorable position. Logic sends one initial
+full display sweep (`0x49` through `0x40`) followed by sparse controller updates.
+In one captured inverse-jog sequence, the display moved
+`0010101006 → 0010101001 → 0020101001`; equal and opposite jog messages did not
+restore the exact initial display. The temporary delay heuristic, debug logging,
+and failing acceptance block were removed.
+
+Before exposing location as verified deterministic, establish a protocol-grounded
+postcondition and a restoration mechanism that passes an exact real-Logic check.
+The existing public operation currently accepts any newer lexicographically
+directional display and is therefore experimental.
 
 Ticket 0010 (Test Project lifecycle) will supply the policy context that enables
 Test Mode activation.
