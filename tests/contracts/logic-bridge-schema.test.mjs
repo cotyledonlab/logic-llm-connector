@@ -93,3 +93,61 @@ test("a successful result cannot omit verification evidence", async () => {
 
   assert.equal(validate(response), false);
 });
+
+test("UI inspection is bounded and excludes UI text", async () => {
+  const validateRequest = await validatorFor("request");
+  const validateResponse = await validatorFor("response");
+  const request = {
+    jsonrpc: "2.0",
+    id: "inspect-1",
+    method: "logic.inspectUI",
+    params: {
+      protocolVersion: "1.0.0",
+      operationId: "inspect-1",
+      maxDepth: 3,
+      maxNodes: 200
+    }
+  };
+  const response = {
+    jsonrpc: "2.0",
+    id: "inspect-1",
+    result: {
+      protocolVersion: "1.0.0",
+      operationId: "inspect-1",
+      status: "succeeded",
+      reliability: "verified_deterministic",
+      startedAt: "2026-08-18T10:00:00Z",
+      finishedAt: "2026-08-18T10:00:00Z",
+      data: {
+        application: { bundleIdentifier: "com.apple.logic10", pid: 42 },
+        capturedAt: "2026-08-18T10:00:00Z",
+        limits: { maxDepth: 3, maxNodes: 200 },
+        truncated: false,
+        nodes: [
+          {
+            id: "node-0",
+            parentId: null,
+            role: "AXApplication",
+            subrole: null,
+            identifier: null,
+            enabled: true,
+            focused: false,
+            childCount: 1
+          }
+        ]
+      },
+      evidence: [
+        {
+          source: "AXUIElement",
+          observedAt: "2026-08-18T10:00:00Z",
+          value: { nodeCount: 1 }
+        }
+      ]
+    }
+  };
+
+  assert.equal(validateRequest(request), true, JSON.stringify(validateRequest.errors));
+  assert.equal(validateResponse(response), true, JSON.stringify(validateResponse.errors));
+  response.result.data.nodes[0].title = "secret project title";
+  assert.equal(validateResponse(response), false);
+});
