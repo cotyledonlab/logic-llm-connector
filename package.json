@@ -8,9 +8,10 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run test:contracts && npm run test:mcp",
+    "test": "npm run test:contracts && npm run test:mcp && npm run test:native",
     "test:contracts": "node --test tests/contracts/*.test.mjs",
     "test:mcp": "tsx --test tests/mcp/*.test.ts",
+    "test:native": "swift test --package-path native/LogicCompanion",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
