@@ -49,6 +49,7 @@ installation.
 - macOS version and processor architecture
 - Logic Pro installation, version, build, and running state
 - Accessibility permission status and remediation
+- CoreMIDI MIDI 1.0 compatibility and virtual endpoint readiness
 
 `logic_inspect_ui` is a restricted diagnostic tool. It is absent unless both
 the Companion and MCP server start with `LOGIC_ENABLE_DIAGNOSTICS=1`. Its
@@ -62,6 +63,11 @@ pause is marked in orange with its reason. Pause, resume, and emergency stop are
 available from the menu. Test Mode defaults to inactive, expires after at most
 one hour, and cannot start until Accessibility and Test Project policy readiness
 are both present.
+
+The Companion also owns stable CoreMIDI MIDI 1.0 virtual endpoints named
+`Logic LLM Connector Out` and `Logic LLM Connector In`. Incoming packets are
+copied out of CoreMIDI's real-time callback and handed to a dedicated queue;
+endpoint loss is observable and recovered without changing endpoint identity.
 
 Build and launch the signed Companion, then run the MCP server:
 

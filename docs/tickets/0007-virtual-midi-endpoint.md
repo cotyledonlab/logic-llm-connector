@@ -1,6 +1,6 @@
 # 0007 — Create the virtual MIDI endpoint
 
-Status: Pending
+Status: Complete
 Depends on: 0005
 
 ## Outcome
