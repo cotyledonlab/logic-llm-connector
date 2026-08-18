@@ -29,7 +29,30 @@ tests.
 ```sh
 npm install
 npm test
+npm run test:integration
 ```
 
 Real-Logic tests will always use disposable fixtures and require explicit test
-mode.
+mode. The current integration test is read-only: it launches the Swift
+companion, connects over a mode-`0600` Unix socket, and verifies `logic_doctor`
+through a real MCP stdio client against the running Logic installation.
+
+## Current capability
+
+`logic_doctor` reports timestamped evidence for:
+
+- macOS version and processor architecture
+- Logic Pro installation, version, build, and running state
+- Accessibility permission status and remediation
+
+Run `npm run build:native`, launch the companion, then run the MCP server:
+
+```sh
+native/LogicCompanion/.build/debug/logic-companion \
+  --socket /tmp/logic-llm-connector-$(id -u).sock
+npm run build
+npm start
+```
+
+When using a different path, pass it to the companion and set the same path in
+`LOGIC_COMPANION_SOCKET` for the MCP server.

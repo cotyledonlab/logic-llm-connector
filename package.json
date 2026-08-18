@@ -3,15 +3,21 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "logic-llm-connector": "dist/packages/mcp-server/src/main.js"
+  },
   "engines": {
     "node": ">=22"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:native": "swift build --package-path native/LogicCompanion",
     "test": "npm run test:contracts && npm run test:mcp && npm run test:native",
     "test:contracts": "node --test tests/contracts/*.test.mjs",
     "test:mcp": "tsx --test tests/mcp/*.test.ts",
     "test:native": "swift test --package-path native/LogicCompanion",
+    "test:integration": "npm run build:native && LOGIC_INTEGRATION_TEST=1 tsx --test tests/integration/*.test.ts",
+    "start": "node dist/packages/mcp-server/src/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
