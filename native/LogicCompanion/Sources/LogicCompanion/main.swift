@@ -266,9 +266,12 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
 }
 
 private let diagnosticsEnabled = ProcessInfo.processInfo.environment["LOGIC_ENABLE_DIAGNOSTICS"] == "1"
+private let mackieFeedback = MackieControlFeedbackMonitor()
 private let midiOwner: VirtualMIDIEndpointOwner = {
     do {
-        return try VirtualMIDIEndpointOwner()
+        return try VirtualMIDIEndpointOwner(onReceive: { messages in
+            mackieFeedback.record(messages)
+        })
     } catch {
         FileHandle.standardError.write(
             Data("logic-companion: failed to create virtual MIDI endpoints: \(error)\n".utf8)
@@ -280,7 +283,8 @@ private let router = BridgeRouter(
     doctor: Doctor(
         system: MacSystemObserver(),
         midiEndpoints: midiOwner,
-        mackieControl: MacMackieControlObserver()
+        mackieControl: MacMackieControlObserver(),
+        mackieFeedback: mackieFeedback
     ),
     diagnosticsEnabled: diagnosticsEnabled
 )

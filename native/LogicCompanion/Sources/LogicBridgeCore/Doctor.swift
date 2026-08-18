@@ -36,17 +36,20 @@ public struct Doctor: Sendable {
     private let system: any SystemObserving
     private let midiEndpoints: (any VirtualMIDIEndpointObserving)?
     private let mackieControl: (any MackieControlConfigurationObserving)?
+    private let mackieFeedback: (any MackieControlFeedbackObserving)?
     private let now: @Sendable () -> Date
 
     public init(
         system: any SystemObserving,
         midiEndpoints: (any VirtualMIDIEndpointObserving)? = nil,
         mackieControl: (any MackieControlConfigurationObserving)? = nil,
+        mackieFeedback: (any MackieControlFeedbackObserving)? = nil,
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.system = system
         self.midiEndpoints = midiEndpoints
         self.mackieControl = mackieControl
+        self.mackieFeedback = mackieFeedback
         self.now = now
     }
 
@@ -149,9 +152,11 @@ public struct Doctor: Sendable {
             evidence.append(midiEvidence)
         }
 
+        var mackieState: MackieControlConfigurationState?
         if let observation = mackieControl?.mackieControlObservation {
             switch observation {
             case let .observed(configuration):
+                mackieState = configuration.state
                 appendMackieControlCheck(
                     configuration,
                     observedAt: startedAt,
@@ -175,6 +180,15 @@ public struct Doctor: Sendable {
                 )
                 evidence.append(unavailableEvidence)
             }
+        }
+        if let feedback = mackieFeedback?.feedbackSnapshot {
+            appendMackieFeedbackCheck(
+                feedback,
+                configurationState: mackieState,
+                observedAt: startedAt,
+                checks: &checks,
+                evidence: &evidence
+            )
         }
 
         return DoctorResult(
@@ -249,6 +263,53 @@ public struct Doctor: Sendable {
                 "Remove assignments that split, duplicate, or use the connector ports with a non-Mackie model, then follow the setup guide."
             )
         }
+    }
+
+    private func appendMackieFeedbackCheck(
+        _ feedback: MackieControlFeedbackSnapshot,
+        configurationState: MackieControlConfigurationState?,
+        observedAt: Date,
+        checks: inout [DoctorCheck],
+        evidence: inout [Evidence]
+    ) {
+        let feedbackEvidence = Evidence(
+            source: "CoreMIDI Logic LLM Connector In",
+            observedAt: observedAt,
+            value: .object([
+                "packetCount": .number(Double(feedback.packetCount)),
+                "midi1ChannelVoicePacketCount": .number(Double(feedback.midi1ChannelVoicePacketCount)),
+                "systemExclusivePacketCount": .number(Double(feedback.systemExclusivePacketCount)),
+                "lastReceivedAt": feedback.lastReceivedAt.map {
+                    .string(ISO8601DateFormatter().string(from: $0))
+                } ?? .null,
+            ])
+        )
+        let status: CheckStatus
+        let summary: String
+        let remediation: String?
+        if configurationState != .configured {
+            status = .unknown
+            summary = "Mackie feedback is not accepted until the exact Logic UI assignment is observed"
+            remediation = "Resolve the Mackie Control UI assignment first, then generate or wait for Logic feedback."
+        } else if feedback.hasControlSurfaceTraffic {
+            status = .passed
+            summary = "Logic sent Mackie-compatible feedback to the Companion"
+            remediation = nil
+        } else {
+            status = .warning
+            summary = "The Mackie Control UI assignment is configured but no Logic feedback has arrived"
+            remediation = "Keep Logic and the Companion running, reselect the configured device, and run Doctor again."
+        }
+        checks.append(
+            DoctorCheck(
+                id: "midi.mackie_feedback",
+                status: status,
+                summary: summary,
+                remediation: remediation,
+                evidence: [feedbackEvidence]
+            )
+        )
+        evidence.append(feedbackEvidence)
     }
 
     private static func remediation(

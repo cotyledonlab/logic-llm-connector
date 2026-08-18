@@ -38,12 +38,22 @@ private struct FixedMackieControl: MackieControlConfigurationObserving {
     ))
 }
 
+private struct FixedMackieFeedback: MackieControlFeedbackObserving {
+    let feedbackSnapshot = MackieControlFeedbackSnapshot(
+        packetCount: 2,
+        midi1ChannelVoicePacketCount: 2,
+        systemExclusivePacketCount: 0,
+        lastReceivedAt: Date(timeIntervalSince1970: 1_700_000_000)
+    )
+}
+
 @Test("doctor reports observed Logic and permission readiness")
 func doctorReportsObservedReadiness() throws {
     let result = Doctor(
         system: FixedSystem(),
         midiEndpoints: FixedMIDIEndpoints(),
-        mackieControl: FixedMackieControl()
+        mackieControl: FixedMackieControl(),
+        mackieFeedback: FixedMackieFeedback()
     ).run(operationID: "doctor-1")
 
     #expect(result.protocolVersion == "1.0.0")
@@ -56,6 +66,7 @@ func doctorReportsObservedReadiness() throws {
         "permission.accessibility",
         "midi.virtual_endpoints",
         "logic.control_surface.mackie",
+        "midi.mackie_feedback",
     ])
     #expect(result.data.checks[1].status == .passed)
     #expect(result.data.checks[1].summary == "Logic Pro 12.3 is installed and running")
@@ -91,6 +102,8 @@ func doctorReportsObservedReadiness() throws {
             ]),
         ]),
     ]))
+    #expect(result.data.checks[5].status == .passed)
+    #expect(result.data.checks[5].summary == "Logic sent Mackie-compatible feedback to the Companion")
     #expect(!result.evidence.isEmpty)
 
     let encoded = try JSONEncoder.bridge.encode(result)
