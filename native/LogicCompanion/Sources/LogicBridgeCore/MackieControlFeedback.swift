@@ -144,6 +144,7 @@ public final class MackieControlFeedbackMonitor: MackieControlFeedbackObserving,
 
     private static func positionDigit(for value: UInt8) -> UInt8? {
         let characterCode = value & 0x3F
+        if characterCode == 0x00 || characterCode == 0x20 { return 0 }
         guard (0x30...0x39).contains(characterCode) else { return nil }
         return characterCode - 0x30
     }

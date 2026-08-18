@@ -67,12 +67,12 @@ func feedbackMonitorDecodesCompletePositionDisplay() {
         0x20B0_4535,
         0x20B0_4636,
         0x20B0_4737,
-        0x20B0_4838,
-        0x20B0_4939,
+        0x20B0_4800,
+        0x20B0_4920,
     ])])
 
     let snapshot = monitor.feedbackSnapshot
     #expect(snapshot.positionSequence == 10)
-    #expect(snapshot.positionDisplay == "9876543210")
+    #expect(snapshot.positionDisplay == "0076543210")
     #expect(snapshot.positionObservedAt == observedAt)
 }
