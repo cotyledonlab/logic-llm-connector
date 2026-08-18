@@ -21,10 +21,22 @@ test("doctor request is a versioned JSON-RPC request", async () => {
     jsonrpc: "2.0",
     id: "doctor-1",
     method: "logic.doctor",
-    params: { protocolVersion: "1.0.0" }
+    params: { protocolVersion: "1.0.0", operationId: "doctor-1" }
   };
 
   assert.equal(validate(request), true, JSON.stringify(validate.errors));
+});
+
+test("doctor request requires an operation ID", async () => {
+  const validate = await validatorFor("request");
+  const request = {
+    jsonrpc: "2.0",
+    id: "doctor-1",
+    method: "logic.doctor",
+    params: { protocolVersion: "1.0.0" }
+  };
+
+  assert.equal(validate(request), false);
 });
 
 test("doctor result preserves evidence and unknown state", async () => {

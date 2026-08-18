@@ -108,9 +108,10 @@
         "method": { "const": "logic.doctor" },
         "params": {
           "type": "object",
-          "required": ["protocolVersion"],
+          "required": ["protocolVersion", "operationId"],
           "properties": {
-            "protocolVersion": { "$ref": "#/$defs/protocolVersion" }
+            "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+            "operationId": { "type": "string", "minLength": 1 }
           },
           "additionalProperties": false
         }
