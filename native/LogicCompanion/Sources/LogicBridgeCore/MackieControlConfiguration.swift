@@ -31,6 +31,18 @@ public struct MackieControlConfiguration: Sendable, Equatable {
     }
 }
 
+public enum MackieControlObservationUnavailableReason: String, Sendable, Equatable {
+    case accessibilityNotTrusted = "accessibility_not_trusted"
+    case logicNotRunning = "logic_not_running"
+    case setupWindowClosed = "setup_window_closed"
+    case unreadableSetupWindow = "unreadable_setup_window"
+}
+
+public enum MackieControlObservation: Sendable, Equatable {
+    case observed(MackieControlConfiguration)
+    case unavailable(MackieControlObservationUnavailableReason)
+}
+
 public enum MackieControlConfigurationClassifier {
     public static let expectedModel = "Mackie Control"
     public static let expectedInputPort = VirtualMIDIEndpointIdentity.source.name
@@ -58,5 +70,5 @@ public enum MackieControlConfigurationClassifier {
 }
 
 public protocol MackieControlConfigurationObserving: Sendable {
-    var configuration: MackieControlConfiguration? { get }
+    var mackieControlObservation: MackieControlObservation { get }
 }

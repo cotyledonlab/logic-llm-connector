@@ -149,7 +149,52 @@ public struct Doctor: Sendable {
             evidence.append(midiEvidence)
         }
 
-        if let configuration = mackieControl?.configuration {
+        if let observation = mackieControl?.mackieControlObservation {
+            switch observation {
+            case let .observed(configuration):
+                appendMackieControlCheck(
+                    configuration,
+                    observedAt: startedAt,
+                    checks: &checks,
+                    evidence: &evidence
+                )
+            case let .unavailable(reason):
+                let unavailableEvidence = Evidence(
+                    source: "Logic Pro Control Surfaces Setup",
+                    observedAt: startedAt,
+                    value: .object(["unavailableReason": .string(reason.rawValue)])
+                )
+                checks.append(
+                    DoctorCheck(
+                        id: "logic.control_surface.mackie",
+                        status: .unknown,
+                        summary: "Mackie Control configuration could not be observed",
+                        remediation: Self.remediation(for: reason),
+                        evidence: [unavailableEvidence]
+                    )
+                )
+                evidence.append(unavailableEvidence)
+            }
+        }
+
+        return DoctorResult(
+            protocolVersion: bridgeProtocolVersion,
+            operationID: operationID,
+            status: .succeeded,
+            reliability: .verifiedDeterministic,
+            startedAt: startedAt,
+            finishedAt: now(),
+            data: DoctorData(checks: checks),
+            evidence: evidence
+        )
+    }
+
+    private func appendMackieControlCheck(
+        _ configuration: MackieControlConfiguration,
+        observedAt: Date,
+        checks: inout [DoctorCheck],
+        evidence: inout [Evidence]
+    ) {
             let assignmentValues = configuration.assignments.map { assignment in
                 JSONValue.object([
                     "model": .string(assignment.model),
@@ -159,7 +204,7 @@ public struct Doctor: Sendable {
             }
             let mackieEvidence = Evidence(
                 source: "Logic Pro Control Surfaces Setup",
-                observedAt: startedAt,
+                observedAt: observedAt,
                 value: .object([
                     "state": .string(configuration.state.rawValue),
                     "expectedModel": .string(MackieControlConfigurationClassifier.expectedModel),
@@ -179,18 +224,6 @@ public struct Doctor: Sendable {
                 )
             )
             evidence.append(mackieEvidence)
-        }
-
-        return DoctorResult(
-            protocolVersion: bridgeProtocolVersion,
-            operationID: operationID,
-            status: .succeeded,
-            reliability: .verifiedDeterministic,
-            startedAt: startedAt,
-            finishedAt: now(),
-            data: DoctorData(checks: checks),
-            evidence: evidence
-        )
     }
 
     private static func presentation(
@@ -215,6 +248,21 @@ public struct Doctor: Sendable {
                 "Logic LLM Connector MIDI ports have conflicting control-surface assignments",
                 "Remove assignments that split, duplicate, or use the connector ports with a non-Mackie model, then follow the setup guide."
             )
+        }
+    }
+
+    private static func remediation(
+        for reason: MackieControlObservationUnavailableReason
+    ) -> String {
+        switch reason {
+        case .accessibilityNotTrusted:
+            "Allow Logic Companion in System Settings > Privacy & Security > Accessibility."
+        case .logicNotRunning:
+            "Open Logic Pro, then open Logic Pro > Control Surfaces > Setup."
+        case .setupWindowClosed:
+            "Open Logic Pro > Control Surfaces > Setup, leave the window visible, and run Doctor again."
+        case .unreadableSetupWindow:
+            "Keep the Control Surface Setup window visible with a device selected, then run Doctor again."
         }
     }
 }

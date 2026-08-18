@@ -26,7 +26,7 @@ private struct FixedMIDIEndpoints: VirtualMIDIEndpointObserving {
 }
 
 private struct FixedMackieControl: MackieControlConfigurationObserving {
-    let configuration: MackieControlConfiguration? = MackieControlConfiguration(
+    let mackieControlObservation = MackieControlObservation.observed(MackieControlConfiguration(
         state: .configured,
         assignments: [
             ControlSurfaceAssignment(
@@ -35,7 +35,7 @@ private struct FixedMackieControl: MackieControlConfigurationObserving {
                 outputPort: "Logic LLM Connector In"
             ),
         ]
-    )
+    ))
 }
 
 @Test("doctor reports observed Logic and permission readiness")

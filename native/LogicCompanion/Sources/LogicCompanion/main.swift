@@ -231,7 +231,8 @@ private let midiOwner: VirtualMIDIEndpointOwner = {
 private let router = BridgeRouter(
     doctor: Doctor(
         system: MacSystemObserver(),
-        midiEndpoints: midiOwner
+        midiEndpoints: midiOwner,
+        mackieControl: MacMackieControlObserver()
     ),
     diagnosticsEnabled: diagnosticsEnabled
 )
