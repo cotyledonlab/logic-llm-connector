@@ -58,6 +58,16 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
   const logic = result.data.checks.find((check) => check.id === "logic.application");
   assert.equal(logic?.status, "passed");
   assert.match(logic?.summary ?? "", /Logic Pro 12\.3 is installed and running/);
+  const midi = result.data.checks.find(
+    (check) => check.id === "midi.virtual_endpoints",
+  );
+  assert.equal(midi?.status, "passed");
+  assert.equal(
+    midi?.summary,
+    "CoreMIDI MIDI 1.0 source and destination are available",
+  );
+  assert.match(JSON.stringify(midi?.evidence), /Logic LLM Connector Out/);
+  assert.match(JSON.stringify(midi?.evidence), /Logic LLM Connector In/);
 
   const mcpTransport = new StdioClientTransport({
     command: join(process.cwd(), "node_modules/.bin/tsx"),
