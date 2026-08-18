@@ -36,18 +36,21 @@ public enum ControlSurfaceSetupParser {
         let containsRelevantPort = strings.contains(where: isRelevantPort)
         guard containsRelevantPort else { return }
 
-        if node.strings.map(normalize).contains(where: isPossibleModel) {
+        let relevantChildren = node.children.filter {
+            flatten($0).map(normalize).contains(where: isRelevantPort)
+        }
+        let candidateChildren = relevantChildren.filter {
+            containsModelField(flatten($0).map(normalize))
+        }
+        if containsModelField(strings) && candidateChildren.isEmpty {
             assignments.append(assignment(from: strings))
             return
         }
 
-        let relevantChildren = node.children.filter {
-            flatten($0).map(normalize).contains(where: isRelevantPort)
-        }
         if relevantChildren.isEmpty {
             assignments.append(assignment(from: strings))
         } else {
-            for child in relevantChildren {
+            for child in candidateChildren.isEmpty ? relevantChildren : candidateChildren {
                 collectAssignments(in: child, into: &assignments)
             }
         }
@@ -55,7 +58,13 @@ public enum ControlSurfaceSetupParser {
 
     private static func assignment(from strings: [String]) -> ControlSurfaceAssignment {
         ControlSurfaceAssignment(
-            model: strings.first(where: isPossibleModel) ?? "Unknown",
+            model: value(after: "Model", in: strings)
+                ?? strings.first(where: {
+                    $0.caseInsensitiveCompare(
+                        MackieControlConfigurationClassifier.expectedModel
+                    ) == .orderedSame
+                })
+                ?? "Unknown",
             inputPort: strings.first(where: {
                 $0 == MackieControlConfigurationClassifier.expectedInputPort
             }),
@@ -73,23 +82,26 @@ public enum ControlSurfaceSetupParser {
         value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private static func normalizedLabel(_ value: String) -> String {
+        normalize(value).trimmingCharacters(in: CharacterSet(charactersIn: ":"))
+    }
+
     private static func isRelevantPort(_ value: String) -> Bool {
         value == MackieControlConfigurationClassifier.expectedInputPort
             || value == MackieControlConfigurationClassifier.expectedOutputPort
     }
 
-    private static func isPossibleModel(_ value: String) -> Bool {
-        let ignored = [
-            "Control Surface Setup",
-            "Control Surfaces Setup",
-            "Device",
-            "Model",
-            "Input Port",
-            "Output Port",
-            MackieControlConfigurationClassifier.expectedInputPort,
-            MackieControlConfigurationClassifier.expectedOutputPort,
-        ]
-        return !value.isEmpty && !ignored.contains(value)
+    private static func containsModelField(_ strings: [String]) -> Bool {
+        strings.contains { normalizedLabel($0) == "Model" }
+    }
+
+    private static func value(after label: String, in strings: [String]) -> String? {
+        guard let labelIndex = strings.firstIndex(where: {
+            normalizedLabel($0) == label
+        }) else { return nil }
+        return strings.dropFirst(labelIndex + 1).first(where: {
+            !normalize($0).isEmpty && normalizedLabel($0) != label
+        }).map(normalize)
     }
 }
 

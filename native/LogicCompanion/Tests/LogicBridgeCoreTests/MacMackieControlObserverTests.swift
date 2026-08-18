@@ -5,11 +5,11 @@ import Testing
 @Test("setup parser extracts the smallest relevant assignment groups")
 func setupParserExtractsRelevantAssignmentGroups() throws {
     let tree = ControlSurfaceUIElement(strings: ["Control Surface Setup"], children: [
-        ControlSurfaceUIElement(strings: ["Device", "Mackie Control"], children: [
+        ControlSurfaceUIElement(strings: ["Model:", "Mackie Control"], children: [
             ControlSurfaceUIElement(strings: ["Input Port", "Logic LLM Connector Out"]),
             ControlSurfaceUIElement(strings: ["Output Port", "Logic LLM Connector In"]),
         ]),
-        ControlSurfaceUIElement(strings: ["Device", "HUI"], children: [
+        ControlSurfaceUIElement(strings: ["Model:", "HUI"], children: [
             ControlSurfaceUIElement(strings: ["Input Port", "Other Input"]),
             ControlSurfaceUIElement(strings: ["Output Port", "Other Output"]),
         ]),
@@ -28,8 +28,12 @@ func setupParserExtractsRelevantAssignmentGroups() throws {
 @Test("setup parser preserves split assignments for conflict classification")
 func setupParserPreservesSplitAssignments() throws {
     let tree = ControlSurfaceUIElement(strings: ["Control Surface Setup"], children: [
-        ControlSurfaceUIElement(strings: ["Mackie Control", "Logic LLM Connector Out"]),
-        ControlSurfaceUIElement(strings: ["Mackie Control", "Logic LLM Connector In"]),
+        ControlSurfaceUIElement(strings: [
+            "Model:", "Mackie Control", "Input Port:", "Logic LLM Connector Out",
+        ]),
+        ControlSurfaceUIElement(strings: [
+            "Model:", "Mackie Control", "Output Port:", "Logic LLM Connector In",
+        ]),
     ])
 
     let assignments = try #require(ControlSurfaceSetupParser.assignments(in: tree))
