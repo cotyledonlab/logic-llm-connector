@@ -8,6 +8,7 @@ public enum ExclusiveTestModePhase: String, Sendable, Equatable {
 
 public enum ExclusiveTestModeStopReason: String, Sendable, Equatable {
     case emergencyStop
+    case timedOut
 }
 
 public struct ExclusiveTestModeReadiness: Sendable, Equatable {
@@ -29,21 +30,45 @@ public struct ExclusiveTestModeSnapshot: Sendable, Equatable {
 public enum ExclusiveTestModeError: Error, Equatable {
     case accessibilityNotReady
     case testProjectPolicyContextMissing
+    case invalidDuration
     case notActive
 }
 
+public protocol ExclusiveTestModeExpirationScheduling: Sendable {
+    func schedule(at deadline: Date, action: @escaping @Sendable () -> Void)
+}
+
+public struct DispatchExpirationScheduler: ExclusiveTestModeExpirationScheduling {
+    public init() {}
+
+    public func schedule(at deadline: Date, action: @escaping @Sendable () -> Void) {
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(
+            deadline: .now() + max(0, deadline.timeIntervalSinceNow),
+            execute: action
+        )
+    }
+}
+
 public final class ExclusiveTestModeController: @unchecked Sendable {
+    public static let maximumDuration: TimeInterval = 60 * 60
+
     private let lock = NSLock()
     private let now: @Sendable () -> Date
+    private let expirationScheduler: any ExclusiveTestModeExpirationScheduling
     private var currentSnapshot = ExclusiveTestModeSnapshot(
         phase: .inactive,
         deadline: nil,
         stopReason: nil
     )
     private var pendingOperations: [String: () -> Void] = [:]
+    private var generation = 0
 
-    public init(now: @escaping @Sendable () -> Date = Date.init) {
+    public init(
+        now: @escaping @Sendable () -> Date = Date.init,
+        expirationScheduler: any ExclusiveTestModeExpirationScheduling = DispatchExpirationScheduler()
+    ) {
         self.now = now
+        self.expirationScheduler = expirationScheduler
     }
 
     public var snapshot: ExclusiveTestModeSnapshot {
@@ -58,18 +83,27 @@ public final class ExclusiveTestModeController: @unchecked Sendable {
         duration: TimeInterval,
         readiness: ExclusiveTestModeReadiness
     ) throws {
+        guard duration > 0, duration <= Self.maximumDuration else {
+            throw ExclusiveTestModeError.invalidDuration
+        }
         guard readiness.accessibilityReady else {
             throw ExclusiveTestModeError.accessibilityNotReady
         }
         guard readiness.testProjectPolicyContext else {
             throw ExclusiveTestModeError.testProjectPolicyContextMissing
         }
-        lock.withLock {
+        let deadline = now().addingTimeInterval(duration)
+        let activationGeneration = lock.withLock {
+            generation += 1
             currentSnapshot = ExclusiveTestModeSnapshot(
                 phase: .active,
-                deadline: now().addingTimeInterval(duration),
+                deadline: deadline,
                 stopReason: nil
             )
+            return generation
+        }
+        expirationScheduler.schedule(at: deadline) { [weak self] in
+            self?.expire(generation: activationGeneration)
         }
     }
 
@@ -109,10 +143,28 @@ public final class ExclusiveTestModeController: @unchecked Sendable {
 
     private func stop(reason: ExclusiveTestModeStopReason) {
         let cancellations = lock.withLock {
+            generation += 1
             currentSnapshot = ExclusiveTestModeSnapshot(
                 phase: .inactive,
                 deadline: nil,
                 stopReason: reason
+            )
+            let callbacks = Array(pendingOperations.values)
+            pendingOperations.removeAll()
+            return callbacks
+        }
+        cancellations.forEach { $0() }
+    }
+
+    private func expire(generation expectedGeneration: Int) {
+        let cancellations = lock.withLock {
+            guard generation == expectedGeneration,
+                  currentSnapshot.phase != .inactive else { return [() -> Void]() }
+            generation += 1
+            currentSnapshot = ExclusiveTestModeSnapshot(
+                phase: .inactive,
+                deadline: nil,
+                stopReason: .timedOut
             )
             let callbacks = Array(pendingOperations.values)
             pendingOperations.removeAll()

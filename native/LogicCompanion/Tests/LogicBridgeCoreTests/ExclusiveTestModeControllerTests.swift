@@ -3,6 +3,20 @@ import Testing
 
 @testable import LogicBridgeCore
 
+private final class ManualExpirationScheduler: ExclusiveTestModeExpirationScheduling, @unchecked Sendable {
+    private let lock = NSLock()
+    private var scheduled: (@Sendable () -> Void)?
+
+    func schedule(at deadline: Date, action: @escaping @Sendable () -> Void) {
+        lock.withLock { scheduled = action }
+    }
+
+    func fire() {
+        let action = lock.withLock { scheduled }
+        action?()
+    }
+}
+
 @Test("exclusive test mode pauses, resumes, and emergency-stops pending work")
 func exclusiveTestModeTransitions() throws {
     let startedAt = Date(timeIntervalSince1970: 1_000)
@@ -38,4 +52,54 @@ func exclusiveTestModeTransitions() throws {
     #expect(controller.snapshot.stopReason == .emergencyStop)
     #expect(!controller.canBeginUIOperation)
     #expect(cancelledOperationIDs == ["operation-1"])
+}
+
+@Test("exclusive test mode requires readiness and expires automatically")
+func exclusiveTestModeReadinessAndExpiration() throws {
+    let scheduler = ManualExpirationScheduler()
+    let controller = ExclusiveTestModeController(
+        now: { Date(timeIntervalSince1970: 2_000) },
+        expirationScheduler: scheduler
+    )
+
+    #expect(throws: ExclusiveTestModeError.accessibilityNotReady) {
+        try controller.activate(
+            duration: 60,
+            readiness: ExclusiveTestModeReadiness(
+                accessibilityReady: false,
+                testProjectPolicyContext: true
+            )
+        )
+    }
+    #expect(throws: ExclusiveTestModeError.testProjectPolicyContextMissing) {
+        try controller.activate(
+            duration: 60,
+            readiness: ExclusiveTestModeReadiness(
+                accessibilityReady: true,
+                testProjectPolicyContext: false
+            )
+        )
+    }
+    #expect(throws: ExclusiveTestModeError.invalidDuration) {
+        try controller.activate(
+            duration: ExclusiveTestModeController.maximumDuration + 1,
+            readiness: ExclusiveTestModeReadiness(
+                accessibilityReady: true,
+                testProjectPolicyContext: true
+            )
+        )
+    }
+
+    try controller.activate(
+        duration: 60,
+        readiness: ExclusiveTestModeReadiness(
+            accessibilityReady: true,
+            testProjectPolicyContext: true
+        )
+    )
+    scheduler.fire()
+
+    #expect(controller.snapshot.phase == .inactive)
+    #expect(controller.snapshot.stopReason == .timedOut)
+    #expect(controller.snapshot.deadline == nil)
 }
