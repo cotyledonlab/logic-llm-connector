@@ -40,6 +40,15 @@ private final class FakeTransportClock: @unchecked Sendable {
     }
 }
 
+private func recordPosition(_ display: String, in monitor: MackieControlFeedbackMonitor) {
+    let words = display.reversed().enumerated().map { index, character in
+        0x20B0_0000
+            | UInt32(0x40 + index) << 8
+            | UInt32(character.asciiValue!)
+    }
+    monitor.record([MIDIMessage(timestamp: 1, words: words)])
+}
+
 @Test("play dispatch is verified only after matching Mackie feedback")
 func playDispatchIsVerifiedByFeedback() {
     let monitor = MackieControlFeedbackMonitor()
@@ -126,4 +135,30 @@ func missingMIDISourceFailsWithoutDispatch() {
     #expect(result.reliability == .unsupported)
     #expect(!result.data.commandDispatched)
     #expect(midi.sent.isEmpty)
+}
+
+@Test("forward jog is verified by newer position feedback")
+func forwardJogIsVerifiedByPositionFeedback() {
+    let monitor = MackieControlFeedbackMonitor()
+    recordPosition("0000000100", in: monitor)
+    let midi = FakeTransportMIDI { message in
+        guard message.words.first == 0x20B0_3C01 else { return }
+        recordPosition("0000000101", in: monitor)
+    }
+    let controller = MackieTransportController(midi: midi, feedback: monitor)
+
+    let result = controller.movePlayhead(
+        .forward,
+        steps: 1,
+        operationID: "jog-1",
+        timeoutMilliseconds: 500
+    )
+
+    #expect(midi.sent.map(\.words) == [[0x20B0_3C01]])
+    #expect(result.status == .succeeded)
+    #expect(result.reliability == .verifiedDeterministic)
+    #expect(result.data.requestedDirection == .forward)
+    #expect(result.data.steps == 1)
+    #expect(result.data.initialPosition.display == "0000000100")
+    #expect(result.data.position.display == "0000000101")
 }

@@ -56,6 +56,9 @@ test("an MCP client can diagnose Logic readiness", async (t) => {
     async setTransportPlaying() {
       throw new Error("transport is not used in this test");
     },
+    async moveTransportPlayhead() {
+      throw new Error("transport is not used in this test");
+    },
   };
 
   const server = createLogicMcpServer({ bridge, createOperationId: () => "op-1" });
@@ -74,6 +77,7 @@ test("an MCP client can diagnose Logic readiness", async (t) => {
     "logic_doctor",
     "logic_play",
     "logic_stop",
+    "logic_move_playhead",
   ]);
 
   const result = await client.callTool({ name: "logic_doctor", arguments: {} });
@@ -149,6 +153,9 @@ test("UI inspection is absent by default and available only when enabled", async
     async setTransportPlaying() {
       throw new Error("transport is not used in this test");
     },
+    async moveTransportPlayhead() {
+      throw new Error("transport is not used in this test");
+    },
   };
   const disabledServer = createLogicMcpServer({
     bridge,
@@ -163,6 +170,7 @@ test("UI inspection is absent by default and available only when enabled", async
     "logic_doctor",
     "logic_play",
     "logic_stop",
+    "logic_move_playhead",
   ]);
   await disabledClient.close();
   await disabledServer.close();
@@ -185,6 +193,7 @@ test("UI inspection is absent by default and available only when enabled", async
     "logic_doctor",
     "logic_play",
     "logic_stop",
+    "logic_move_playhead",
     "logic_inspect_ui",
   ]);
   const result = await client.callTool({
@@ -259,6 +268,29 @@ test("transport tools and resource preserve verified native outcomes", async (t)
         evidence: [{ source: "Mackie Control feedback", observedAt: timestamp, value: state }],
       };
     },
+    async moveTransportPlayhead(request) {
+      calls.push(request);
+      return {
+        protocolVersion: "1.0.0",
+        operationId: request.operationId,
+        status: "succeeded",
+        reliability: "verified_deterministic",
+        startedAt: timestamp,
+        finishedAt: timestamp,
+        data: {
+          requestedDirection: request.direction,
+          steps: request.steps,
+          commandDispatched: true,
+          initialPosition: { display: "0000000100", observedAt: timestamp },
+          position: { display: "0000000101", observedAt: timestamp },
+        },
+        evidence: [{
+          source: "Mackie Control position feedback",
+          observedAt: timestamp,
+          value: { display: "0000000101" },
+        }],
+      };
+    },
   };
   let operation = 0;
   const server = createLogicMcpServer({
@@ -278,11 +310,32 @@ test("transport tools and resource preserve verified native outcomes", async (t)
   assert.equal(play.isError, undefined);
   assert.equal((play.structuredContent as Record<string, unknown>)["requestedState"], "playing");
 
+  const move = await client.callTool({
+    name: "logic_move_playhead",
+    arguments: { direction: "forward", steps: 1, timeoutMs: 750 },
+  });
+  assert.equal(move.isError, undefined);
+  assert.deepEqual(move.structuredContent, {
+    operationId: "transport-2",
+    status: "succeeded",
+    reliability: "verified_deterministic",
+    requestedDirection: "forward",
+    steps: 1,
+    commandDispatched: true,
+    initialPosition: { display: "0000000100", observedAt: timestamp },
+    position: { display: "0000000101", observedAt: timestamp },
+    evidence: [{
+      source: "Mackie Control position feedback",
+      observedAt: timestamp,
+      value: { display: "0000000101" },
+    }],
+  });
+
   const resource = await client.readResource({ uri: "logic://transport/state" });
   const resourceContent = resource.contents[0];
   assert.ok(resourceContent && "text" in resourceContent);
   assert.deepEqual(JSON.parse(resourceContent.text), {
-    operationId: "transport-2",
+    operationId: "transport-3",
     status: "succeeded",
     reliability: "verified_deterministic",
     state,
@@ -295,6 +348,13 @@ test("transport tools and resource preserve verified native outcomes", async (t)
       playing: true,
       timeoutMs: 750,
     },
-    { protocolVersion: "1.0.0", operationId: "transport-2" },
+    {
+      protocolVersion: "1.0.0",
+      operationId: "transport-2",
+      direction: "forward",
+      steps: 1,
+      timeoutMs: 750,
+    },
+    { protocolVersion: "1.0.0", operationId: "transport-3" },
   ]);
 });

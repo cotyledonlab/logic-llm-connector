@@ -212,6 +212,65 @@ public struct TransportOperationResult: Codable, Sendable, Equatable {
     }
 }
 
+public enum TransportMoveDirection: String, Codable, Sendable {
+    case backward
+    case forward
+}
+
+public struct TransportPositionData: Codable, Sendable, Equatable {
+    public let display: String?
+    public let observedAt: Date?
+
+    public init(display: String?, observedAt: Date?) {
+        self.display = display
+        self.observedAt = observedAt
+    }
+}
+
+public struct TransportLocationOperationData: Codable, Sendable, Equatable {
+    public let requestedDirection: TransportMoveDirection
+    public let steps: Int
+    public let commandDispatched: Bool
+    public let initialPosition: TransportPositionData
+    public let position: TransportPositionData
+
+    public init(
+        requestedDirection: TransportMoveDirection,
+        steps: Int,
+        commandDispatched: Bool,
+        initialPosition: TransportPositionData,
+        position: TransportPositionData
+    ) {
+        self.requestedDirection = requestedDirection
+        self.steps = steps
+        self.commandDispatched = commandDispatched
+        self.initialPosition = initialPosition
+        self.position = position
+    }
+}
+
+public struct TransportLocationOperationResult: Codable, Sendable, Equatable {
+    public let protocolVersion: String
+    public let operationID: String
+    public let status: OperationStatus
+    public let reliability: Reliability
+    public let startedAt: Date
+    public let finishedAt: Date
+    public let data: TransportLocationOperationData
+    public let evidence: [Evidence]
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion
+        case operationID = "operationId"
+        case status
+        case reliability
+        case startedAt
+        case finishedAt
+        case data
+        case evidence
+    }
+}
+
 public extension JSONEncoder {
     static var bridge: JSONEncoder {
         let encoder = JSONEncoder()

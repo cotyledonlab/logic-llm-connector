@@ -102,6 +102,29 @@ private struct TransportSetPlayingRequest: Codable {
     let params: TransportSetPlayingParameters
 }
 
+private struct TransportMovePlayheadParameters: Codable {
+    let protocolVersion: String
+    let operationID: String
+    let direction: TransportMoveDirection
+    let steps: Int
+    let timeoutMs: Int
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion
+        case operationID = "operationId"
+        case direction
+        case steps
+        case timeoutMs
+    }
+}
+
+private struct TransportMovePlayheadRequest: Codable {
+    let jsonrpc: String
+    let id: JSONRPCID
+    let method: String
+    let params: TransportMovePlayheadParameters
+}
+
 private struct JSONRPCResponse<Result: Codable>: Codable {
     let jsonrpc: String
     let id: JSONRPCID
@@ -144,6 +167,8 @@ public struct BridgeRouter: Sendable {
             return try routeTransportState(data)
         case "logic.transport.setPlaying":
             return try routeTransportSetPlaying(data)
+        case "logic.transport.movePlayhead":
+            return try routeTransportMovePlayhead(data)
         default:
             throw BridgeRouterError.unsupportedMethod(envelope.method)
         }
@@ -172,6 +197,24 @@ public struct BridgeRouter: Sendable {
                 id: request.id,
                 result: transport.setPlaying(
                     request.params.playing,
+                    operationID: request.params.operationID,
+                    timeoutMilliseconds: request.params.timeoutMs
+                )
+            )
+        )
+    }
+
+    private func routeTransportMovePlayhead(_ data: Data) throws -> Data {
+        guard let transport else { throw BridgeRouterError.transportUnavailable }
+        let request = try JSONDecoder().decode(TransportMovePlayheadRequest.self, from: data)
+        try validateProtocolVersion(request.params.protocolVersion)
+        return try JSONEncoder.bridge.encode(
+            JSONRPCResponse(
+                jsonrpc: "2.0",
+                id: request.id,
+                result: transport.movePlayhead(
+                    request.params.direction,
+                    steps: request.params.steps,
                     operationID: request.params.operationID,
                     timeoutMilliseconds: request.params.timeoutMs
                 )

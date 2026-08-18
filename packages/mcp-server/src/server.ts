@@ -90,6 +90,21 @@ export interface TransportOperationResult extends Omit<TransportStateResult, "da
   };
 }
 
+export interface TransportPosition {
+  display: string | null;
+  observedAt: string | null;
+}
+
+export interface TransportLocationOperationResult extends Omit<TransportStateResult, "data"> {
+  data: {
+    requestedDirection: "backward" | "forward";
+    steps: number;
+    commandDispatched: boolean;
+    initialPosition: TransportPosition;
+    position: TransportPosition;
+  };
+}
+
 export interface LogicBridge {
   doctor(request: {
     protocolVersion: typeof BRIDGE_PROTOCOL_VERSION;
@@ -111,6 +126,13 @@ export interface LogicBridge {
     playing: boolean;
     timeoutMs: number;
   }): Promise<TransportOperationResult>;
+  moveTransportPlayhead(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION;
+    operationId: string;
+    direction: "backward" | "forward";
+    steps: number;
+    timeoutMs: number;
+  }): Promise<TransportLocationOperationResult>;
 }
 
 export interface LogicMcpServerDependencies {
@@ -198,6 +220,28 @@ const transportOutputSchema = z.object({
   requestedState: z.enum(["playing", "stopped"]),
   commandDispatched: z.boolean(),
   state: transportStateSchema,
+  evidence: z.array(evidenceSchema),
+});
+
+const transportPositionSchema = z.object({
+  display: z.string().regex(/^\d{10}$/).nullable(),
+  observedAt: z.iso.datetime().nullable(),
+});
+
+const transportLocationOutputSchema = z.object({
+  operationId: z.string(),
+  status: z.enum(["succeeded", "partial", "failed", "cancelled", "timed_out"]),
+  reliability: z.enum([
+    "verified_deterministic",
+    "verified_ui_driven",
+    "best_effort",
+    "unsupported",
+  ]),
+  requestedDirection: z.enum(["backward", "forward"]),
+  steps: z.number().int().min(1).max(100),
+  commandDispatched: z.boolean(),
+  initialPosition: transportPositionSchema,
+  position: transportPositionSchema,
   evidence: z.array(evidenceSchema),
 });
 
@@ -297,6 +341,54 @@ export function createLogicMcpServer({
 
   registerTransportTool("logic_play", true);
   registerTransportTool("logic_stop", false);
+
+  server.registerTool(
+    "logic_move_playhead",
+    {
+      title: "Move Logic playhead",
+      description:
+        "Move the Logic playhead by bounded Mackie jog-wheel steps and verify the direction from position-display feedback.",
+      inputSchema: z.object({
+        direction: z.enum(["backward", "forward"]),
+        steps: z.number().int().min(1).max(100).default(1),
+        timeoutMs: z.number().int().min(100).max(5000).default(1500),
+      }),
+      outputSchema: transportLocationOutputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ direction, steps, timeoutMs }) => {
+      const result = await bridge.moveTransportPlayhead({
+        protocolVersion: BRIDGE_PROTOCOL_VERSION,
+        operationId: createOperationId(),
+        direction,
+        steps,
+        timeoutMs,
+      });
+      const structuredContent = {
+        operationId: result.operationId,
+        status: result.status,
+        reliability: result.reliability,
+        requestedDirection: result.data.requestedDirection,
+        steps: result.data.steps,
+        commandDispatched: result.data.commandDispatched,
+        initialPosition: result.data.initialPosition,
+        position: result.data.position,
+        evidence: result.evidence,
+      };
+      return {
+        content: [{
+          type: "text",
+          text: `Logic playhead position is ${result.data.position.display ?? "unknown"} (${result.status}).`,
+        }],
+        structuredContent,
+      };
+    },
+  );
 
   server.registerResource(
     "logic_transport_state",

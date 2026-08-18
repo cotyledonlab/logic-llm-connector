@@ -7,6 +7,12 @@ public protocol TransportControlling: Sendable {
         operationID: String,
         timeoutMilliseconds: Int
     ) -> TransportOperationResult
+    func movePlayhead(
+        _ direction: TransportMoveDirection,
+        steps: Int,
+        operationID: String,
+        timeoutMilliseconds: Int
+    ) -> TransportLocationOperationResult
 }
 
 public struct MackieTransportController: TransportControlling, Sendable {
@@ -140,6 +146,108 @@ public struct MackieTransportController: TransportControlling, Sendable {
         )
     }
 
+    public func movePlayhead(
+        _ direction: TransportMoveDirection,
+        steps: Int,
+        operationID: String,
+        timeoutMilliseconds: Int
+    ) -> TransportLocationOperationResult {
+        let startedAt = now()
+        let initial = feedback.feedbackSnapshot
+        guard let initialDisplay = initial.positionDisplay else {
+            return locationResult(
+                operationID: operationID,
+                direction: direction,
+                steps: steps,
+                dispatched: false,
+                status: .failed,
+                reliability: .unsupported,
+                startedAt: startedAt,
+                initial: initial,
+                latest: initial
+            )
+        }
+
+        guard midi.snapshot.sourceAvailable else {
+            return locationResult(
+                operationID: operationID,
+                direction: direction,
+                steps: steps,
+                dispatched: false,
+                status: .failed,
+                reliability: .unsupported,
+                startedAt: startedAt,
+                initial: initial,
+                latest: initial
+            )
+        }
+
+        do {
+            let value: UInt32 = direction == .forward ? 0x01 : 0x41
+            for _ in 0..<steps {
+                try midi.send(MIDIMessage(timestamp: 0, words: [0x20B0_3C00 | value]))
+            }
+        } catch {
+            return locationResult(
+                operationID: operationID,
+                direction: direction,
+                steps: steps,
+                dispatched: false,
+                status: .failed,
+                reliability: .bestEffort,
+                startedAt: startedAt,
+                initial: initial,
+                latest: feedback.feedbackSnapshot,
+                extraEvidence: [Evidence(
+                    source: "CoreMIDI dispatch",
+                    observedAt: now(),
+                    value: .string(String(describing: error))
+                )]
+            )
+        }
+
+        let deadline = startedAt.addingTimeInterval(
+            TimeInterval(timeoutMilliseconds) / 1_000
+        )
+        var latest = feedback.feedbackSnapshot
+        while now() < deadline {
+            latest = feedback.feedbackSnapshot
+            if latest.positionSequence > initial.positionSequence,
+               let latestDisplay = latest.positionDisplay,
+               moved(from: initialDisplay, to: latestDisplay, direction: direction) {
+                return locationResult(
+                    operationID: operationID,
+                    direction: direction,
+                    steps: steps,
+                    dispatched: true,
+                    status: .succeeded,
+                    reliability: .verifiedDeterministic,
+                    startedAt: startedAt,
+                    initial: initial,
+                    latest: latest
+                )
+            }
+            wait(0.01)
+        }
+
+        return locationResult(
+            operationID: operationID,
+            direction: direction,
+            steps: steps,
+            dispatched: true,
+            status: .timedOut,
+            reliability: .bestEffort,
+            startedAt: startedAt,
+            initial: initial,
+            latest: latest,
+            extraEvidence: [Evidence(
+                source: "Mackie Control position feedback deadline",
+                observedAt: now(),
+                value: .number(Double(timeoutMilliseconds))
+            )]
+        )
+    }
+
     private func press(_ note: MackieTransportNote) throws {
         let timestamp: UInt64 = 0
         try midi.send(MIDIMessage(
@@ -190,5 +298,66 @@ public struct MackieTransportController: TransportControlling, Sendable {
                 "recordReady": .string(snapshot.transportState.recordReady.rawValue),
             ])
         )]
+    }
+
+    private func moved(
+        from initial: String,
+        to latest: String,
+        direction: TransportMoveDirection
+    ) -> Bool {
+        switch direction {
+        case .backward: latest < initial
+        case .forward: latest > initial
+        }
+    }
+
+    private func locationResult(
+        operationID: String,
+        direction: TransportMoveDirection,
+        steps: Int,
+        dispatched: Bool,
+        status: OperationStatus,
+        reliability: Reliability,
+        startedAt: Date,
+        initial: MackieControlFeedbackSnapshot,
+        latest: MackieControlFeedbackSnapshot,
+        extraEvidence: [Evidence] = []
+    ) -> TransportLocationOperationResult {
+        let initialPosition = TransportPositionData(
+            display: initial.positionDisplay,
+            observedAt: initial.positionObservedAt
+        )
+        let position = TransportPositionData(
+            display: latest.positionDisplay,
+            observedAt: latest.positionObservedAt
+        )
+        var evidence = extraEvidence
+        if let observedAt = latest.positionObservedAt,
+           let display = latest.positionDisplay {
+            evidence.insert(Evidence(
+                source: "Mackie Control position feedback",
+                observedAt: observedAt,
+                value: .object([
+                    "sequence": .number(Double(latest.positionSequence)),
+                    "display": .string(display),
+                ])
+            ), at: 0)
+        }
+        return TransportLocationOperationResult(
+            protocolVersion: bridgeProtocolVersion,
+            operationID: operationID,
+            status: status,
+            reliability: reliability,
+            startedAt: startedAt,
+            finishedAt: now(),
+            data: TransportLocationOperationData(
+                requestedDirection: direction,
+                steps: steps,
+                commandDispatched: dispatched,
+                initialPosition: initialPosition,
+                position: position
+            ),
+            evidence: evidence
+        )
     }
 }

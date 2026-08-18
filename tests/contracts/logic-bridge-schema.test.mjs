@@ -209,3 +209,55 @@ test("transport state observation is a read-only bridge request", async () => {
     params: { protocolVersion: "1.0.0", operationId: "transport-state-1" }
   }), true, JSON.stringify(validate.errors));
 });
+
+test("playhead movement is bounded and carries position evidence", async () => {
+  const validateRequest = await validatorFor("request");
+  const validateResponse = await validatorFor("response");
+  const request = {
+    jsonrpc: "2.0",
+    id: "move-1",
+    method: "logic.transport.movePlayhead",
+    params: {
+      protocolVersion: "1.0.0",
+      operationId: "move-1",
+      direction: "forward",
+      steps: 1,
+      timeoutMs: 1000
+    }
+  };
+  const response = {
+    jsonrpc: "2.0",
+    id: "move-1",
+    result: {
+      protocolVersion: "1.0.0",
+      operationId: "move-1",
+      status: "succeeded",
+      reliability: "verified_deterministic",
+      startedAt: "2026-08-18T10:00:00Z",
+      finishedAt: "2026-08-18T10:00:01Z",
+      data: {
+        requestedDirection: "forward",
+        steps: 1,
+        commandDispatched: true,
+        initialPosition: {
+          display: "0000000100",
+          observedAt: "2026-08-18T10:00:00Z"
+        },
+        position: {
+          display: "0000000101",
+          observedAt: "2026-08-18T10:00:01Z"
+        }
+      },
+      evidence: [{
+        source: "Mackie Control position feedback",
+        observedAt: "2026-08-18T10:00:01Z",
+        value: { display: "0000000101" }
+      }]
+    }
+  };
+
+  assert.equal(validateRequest(request), true, JSON.stringify(validateRequest.errors));
+  assert.equal(validateResponse(response), true, JSON.stringify(validateResponse.errors));
+  request.params.steps = 101;
+  assert.equal(validateRequest(request), false);
+});

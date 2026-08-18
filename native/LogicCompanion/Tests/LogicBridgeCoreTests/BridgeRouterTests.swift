@@ -81,6 +81,40 @@ private struct FixedTransportController: TransportControlling {
         )
     }
 
+    func movePlayhead(
+        _ direction: TransportMoveDirection,
+        steps: Int,
+        operationID: String,
+        timeoutMilliseconds: Int
+    ) -> TransportLocationOperationResult {
+        TransportLocationOperationResult(
+            protocolVersion: bridgeProtocolVersion,
+            operationID: operationID,
+            status: .succeeded,
+            reliability: .verifiedDeterministic,
+            startedAt: timestamp,
+            finishedAt: timestamp,
+            data: TransportLocationOperationData(
+                requestedDirection: direction,
+                steps: steps,
+                commandDispatched: true,
+                initialPosition: TransportPositionData(
+                    display: "0000000100",
+                    observedAt: timestamp
+                ),
+                position: TransportPositionData(
+                    display: "0000000101",
+                    observedAt: timestamp
+                )
+            ),
+            evidence: [Evidence(
+                source: "Mackie Control position feedback",
+                observedAt: timestamp,
+                value: .string("0000000101")
+            )]
+        )
+    }
+
     private func state(_ playing: TransportPlayingState) -> TransportStateData {
         TransportStateData(
             playing: playing,
@@ -173,6 +207,9 @@ func bridgeRoutesTransportRequests() throws {
     let playRequest = """
     {"jsonrpc":"2.0","id":"play-1","method":"logic.transport.setPlaying","params":{"protocolVersion":"1.0.0","operationId":"play-1","playing":true,"timeoutMs":750}}
     """.data(using: .utf8)!
+    let moveRequest = """
+    {"jsonrpc":"2.0","id":"move-1","method":"logic.transport.movePlayhead","params":{"protocolVersion":"1.0.0","operationId":"move-1","direction":"forward","steps":1,"timeoutMs":750}}
+    """.data(using: .utf8)!
 
     let stateResponse = try #require(
         JSONSerialization.jsonObject(with: router.handle(stateRequest)) as? [String: Any]
@@ -189,4 +226,15 @@ func bridgeRoutesTransportRequests() throws {
     #expect(playResult["status"] as? String == "succeeded")
     #expect(playData["requestedState"] as? String == "playing")
     #expect(playData["commandDispatched"] as? Bool == true)
+
+    let moveResponse = try #require(
+        JSONSerialization.jsonObject(with: router.handle(moveRequest)) as? [String: Any]
+    )
+    let moveResult = try #require(moveResponse["result"] as? [String: Any])
+    let moveData = try #require(moveResult["data"] as? [String: Any])
+    let position = try #require(moveData["position"] as? [String: Any])
+    #expect(moveResult["status"] as? String == "succeeded")
+    #expect(moveData["requestedDirection"] as? String == "forward")
+    #expect(moveData["steps"] as? Int == 1)
+    #expect(position["display"] as? String == "0000000101")
 }
