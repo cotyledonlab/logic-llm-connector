@@ -7,6 +7,9 @@ public struct MackieControlFeedbackSnapshot: Sendable, Equatable {
     public let lastReceivedAt: Date?
     public let transportSequence: UInt64
     public let transportState: TransportStateData
+    public let positionSequence: UInt64
+    public let positionDisplay: String?
+    public let positionObservedAt: Date?
 
     public init(
         packetCount: Int,
@@ -19,7 +22,10 @@ public struct MackieControlFeedbackSnapshot: Sendable, Equatable {
             cycle: .unknown,
             recordReady: .unknown,
             observedAt: nil
-        )
+        ),
+        positionSequence: UInt64 = 0,
+        positionDisplay: String? = nil,
+        positionObservedAt: Date? = nil
     ) {
         self.packetCount = packetCount
         self.midi1ChannelVoicePacketCount = midi1ChannelVoicePacketCount
@@ -27,6 +33,9 @@ public struct MackieControlFeedbackSnapshot: Sendable, Equatable {
         self.lastReceivedAt = lastReceivedAt
         self.transportSequence = transportSequence
         self.transportState = transportState
+        self.positionSequence = positionSequence
+        self.positionDisplay = positionDisplay
+        self.positionObservedAt = positionObservedAt
     }
 
     public var hasControlSurfaceTraffic: Bool {
@@ -51,6 +60,9 @@ public final class MackieControlFeedbackMonitor: MackieControlFeedbackObserving,
     private var cycleLED: Bool?
     private var recordLED: Bool?
     private var transportObservedAt: Date?
+    private var positionSequence: UInt64 = 0
+    private var positionDigits = [UInt8?](repeating: nil, count: 10)
+    private var positionObservedAt: Date?
 
     public init(now: @escaping @Sendable () -> Date = Date.init) {
         self.now = now
@@ -64,7 +76,10 @@ public final class MackieControlFeedbackMonitor: MackieControlFeedbackObserving,
                 systemExclusivePacketCount: systemExclusivePacketCount,
                 lastReceivedAt: lastReceivedAt,
                 transportSequence: transportSequence,
-                transportState: transportStateWithoutLocking()
+                transportState: transportStateWithoutLocking(),
+                positionSequence: positionSequence,
+                positionDisplay: positionDisplayWithoutLocking(),
+                positionObservedAt: positionObservedAt
             )
         }
     }
@@ -79,6 +94,7 @@ public final class MackieControlFeedbackMonitor: MackieControlFeedbackObserving,
                     case 0x2:
                         midi1ChannelVoicePacketCount += 1
                         recordTransportLED(word)
+                        recordPositionDisplay(word)
                     case 0x3:
                         systemExclusivePacketCount += 1
                     default:
@@ -106,6 +122,30 @@ public final class MackieControlFeedbackMonitor: MackieControlFeedbackObserving,
         }
         transportSequence &+= 1
         transportObservedAt = now()
+    }
+
+    private func recordPositionDisplay(_ word: UInt32) {
+        let status = UInt8((word >> 16) & 0xFF)
+        guard status & 0xF0 == 0xB0 else { return }
+        let controller = UInt8((word >> 8) & 0x7F)
+        guard (0x40...0x49).contains(controller) else { return }
+        let value = UInt8(word & 0x7F)
+        positionDigits[Int(controller - 0x40)] = Self.positionDigit(for: value)
+        positionSequence &+= 1
+        positionObservedAt = now()
+    }
+
+    private func positionDisplayWithoutLocking() -> String? {
+        guard positionDigits.allSatisfy({ $0 != nil }) else { return nil }
+        return String(positionDigits.reversed().compactMap { digit in
+            digit.map { Character(String($0)) }
+        })
+    }
+
+    private static func positionDigit(for value: UInt8) -> UInt8? {
+        let characterCode = value & 0x3F
+        guard (0x30...0x39).contains(characterCode) else { return nil }
+        return characterCode - 0x30
     }
 
     private func transportStateWithoutLocking() -> TransportStateData {

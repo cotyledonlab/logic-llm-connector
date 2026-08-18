@@ -52,3 +52,27 @@ func feedbackMonitorDecodesTransportLEDs() {
         observedAt: observedAt
     ))
 }
+
+@Test("feedback monitor decodes a complete Mackie position display")
+func feedbackMonitorDecodesCompletePositionDisplay() {
+    let observedAt = Date(timeIntervalSince1970: 1_700_000_002)
+    let monitor = MackieControlFeedbackMonitor(now: { observedAt })
+
+    monitor.record([MIDIMessage(timestamp: 1, words: [
+        0x20B0_4030,
+        0x20B0_4131,
+        0x20B0_4232,
+        0x20B0_4333,
+        0x20B0_4474,
+        0x20B0_4535,
+        0x20B0_4636,
+        0x20B0_4737,
+        0x20B0_4838,
+        0x20B0_4939,
+    ])])
+
+    let snapshot = monitor.feedbackSnapshot
+    #expect(snapshot.positionSequence == 10)
+    #expect(snapshot.positionDisplay == "9876543210")
+    #expect(snapshot.positionObservedAt == observedAt)
+}
