@@ -50,6 +50,12 @@ test("an MCP client can diagnose Logic readiness", async (t) => {
     async inspectUI() {
       throw new Error("UI inspection is not used in this test");
     },
+    async transportState() {
+      throw new Error("transport is not used in this test");
+    },
+    async setTransportPlaying() {
+      throw new Error("transport is not used in this test");
+    },
   };
 
   const server = createLogicMcpServer({ bridge, createOperationId: () => "op-1" });
@@ -64,7 +70,11 @@ test("an MCP client can diagnose Logic readiness", async (t) => {
   });
 
   const listed = await client.listTools();
-  assert.deepEqual(listed.tools.map((tool) => tool.name), ["logic_doctor"]);
+  assert.deepEqual(listed.tools.map((tool) => tool.name), [
+    "logic_doctor",
+    "logic_play",
+    "logic_stop",
+  ]);
 
   const result = await client.callTool({ name: "logic_doctor", arguments: {} });
   assert.equal(result.isError, undefined);
@@ -133,6 +143,12 @@ test("UI inspection is absent by default and available only when enabled", async
         ],
       };
     },
+    async transportState() {
+      throw new Error("transport is not used in this test");
+    },
+    async setTransportPlaying() {
+      throw new Error("transport is not used in this test");
+    },
   };
   const disabledServer = createLogicMcpServer({
     bridge,
@@ -145,6 +161,8 @@ test("UI inspection is absent by default and available only when enabled", async
   await disabledClient.connect(disabledClientTransport);
   assert.deepEqual((await disabledClient.listTools()).tools.map((tool) => tool.name), [
     "logic_doctor",
+    "logic_play",
+    "logic_stop",
   ]);
   await disabledClient.close();
   await disabledServer.close();
@@ -165,6 +183,8 @@ test("UI inspection is absent by default and available only when enabled", async
 
   assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), [
     "logic_doctor",
+    "logic_play",
+    "logic_stop",
     "logic_inspect_ui",
   ]);
   const result = await client.callTool({
@@ -194,5 +214,87 @@ test("UI inspection is absent by default and available only when enabled", async
       maxDepth: 2,
       maxNodes: 50,
     },
+  ]);
+});
+
+test("transport tools and resource preserve verified native outcomes", async (t) => {
+  const calls: unknown[] = [];
+  const timestamp = "2026-08-18T10:00:00.000Z";
+  const state = {
+    playing: "playing" as const,
+    cycle: "disabled" as const,
+    recordReady: "not_ready" as const,
+    observedAt: timestamp,
+  };
+  const bridge: LogicBridge = {
+    async doctor() { throw new Error("unused"); },
+    async inspectUI() { throw new Error("unused"); },
+    async transportState(request) {
+      calls.push(request);
+      return {
+        protocolVersion: "1.0.0",
+        operationId: request.operationId,
+        status: "succeeded",
+        reliability: "verified_deterministic",
+        startedAt: timestamp,
+        finishedAt: timestamp,
+        data: state,
+        evidence: [{ source: "Mackie Control feedback", observedAt: timestamp, value: state }],
+      };
+    },
+    async setTransportPlaying(request) {
+      calls.push(request);
+      return {
+        protocolVersion: "1.0.0",
+        operationId: request.operationId,
+        status: "succeeded",
+        reliability: "verified_deterministic",
+        startedAt: timestamp,
+        finishedAt: timestamp,
+        data: {
+          requestedState: request.playing ? "playing" : "stopped",
+          commandDispatched: true,
+          state: { ...state, playing: request.playing ? "playing" : "stopped" },
+        },
+        evidence: [{ source: "Mackie Control feedback", observedAt: timestamp, value: state }],
+      };
+    },
+  };
+  let operation = 0;
+  const server = createLogicMcpServer({
+    bridge,
+    createOperationId: () => `transport-${++operation}`,
+  });
+  const client = new Client({ name: "transport-client", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  t.after(async () => { await client.close(); await server.close(); });
+
+  const play = await client.callTool({
+    name: "logic_play",
+    arguments: { timeoutMs: 750 },
+  });
+  assert.equal(play.isError, undefined);
+  assert.equal((play.structuredContent as Record<string, unknown>)["requestedState"], "playing");
+
+  const resource = await client.readResource({ uri: "logic://transport/state" });
+  const resourceContent = resource.contents[0];
+  assert.ok(resourceContent && "text" in resourceContent);
+  assert.deepEqual(JSON.parse(resourceContent.text), {
+    operationId: "transport-2",
+    status: "succeeded",
+    reliability: "verified_deterministic",
+    state,
+    evidence: [{ source: "Mackie Control feedback", observedAt: timestamp, value: state }],
+  });
+  assert.deepEqual(calls, [
+    {
+      protocolVersion: "1.0.0",
+      operationId: "transport-1",
+      playing: true,
+      timeoutMs: 750,
+    },
+    { protocolVersion: "1.0.0", operationId: "transport-2" },
   ]);
 });

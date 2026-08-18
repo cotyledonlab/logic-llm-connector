@@ -151,3 +151,61 @@ test("UI inspection is bounded and excludes UI text", async () => {
   response.result.data.nodes[0].title = "secret project title";
   assert.equal(validateResponse(response), false);
 });
+
+test("transport requests and feedback-bearing results are versioned", async () => {
+  const validateRequest = await validatorFor("request");
+  const validateResponse = await validatorFor("response");
+  const request = {
+    jsonrpc: "2.0",
+    id: "transport-1",
+    method: "logic.transport.setPlaying",
+    params: {
+      protocolVersion: "1.0.0",
+      operationId: "transport-1",
+      playing: true,
+      timeoutMs: 1000
+    }
+  };
+  const response = {
+    jsonrpc: "2.0",
+    id: "transport-1",
+    result: {
+      protocolVersion: "1.0.0",
+      operationId: "transport-1",
+      status: "succeeded",
+      reliability: "verified_deterministic",
+      startedAt: "2026-08-18T10:00:00Z",
+      finishedAt: "2026-08-18T10:00:00Z",
+      data: {
+        requestedState: "playing",
+        commandDispatched: true,
+        state: {
+          playing: "playing",
+          cycle: "disabled",
+          recordReady: "not_ready",
+          observedAt: "2026-08-18T10:00:00Z"
+        }
+      },
+      evidence: [{
+        source: "Mackie Control feedback",
+        observedAt: "2026-08-18T10:00:00Z",
+        value: { note: 94, enabled: true }
+      }]
+    }
+  };
+
+  assert.equal(validateRequest(request), true, JSON.stringify(validateRequest.errors));
+  assert.equal(validateResponse(response), true, JSON.stringify(validateResponse.errors));
+  request.params.timeoutMs = 99;
+  assert.equal(validateRequest(request), false);
+});
+
+test("transport state observation is a read-only bridge request", async () => {
+  const validate = await validatorFor("request");
+  assert.equal(validate({
+    jsonrpc: "2.0",
+    id: "transport-state-1",
+    method: "logic.transport.state",
+    params: { protocolVersion: "1.0.0", operationId: "transport-state-1" }
+  }), true, JSON.stringify(validate.errors));
+});

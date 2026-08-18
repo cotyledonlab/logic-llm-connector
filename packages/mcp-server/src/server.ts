@@ -64,6 +64,32 @@ export interface AXInspectionResult {
   evidence: Evidence[];
 }
 
+export interface TransportState {
+  playing: "playing" | "stopped" | "unknown";
+  cycle: "enabled" | "disabled" | "unknown";
+  recordReady: "ready" | "not_ready" | "unknown";
+  observedAt: string | null;
+}
+
+export interface TransportStateResult {
+  protocolVersion: typeof BRIDGE_PROTOCOL_VERSION;
+  operationId: string;
+  status: "succeeded" | "partial" | "failed" | "cancelled" | "timed_out";
+  reliability: Reliability;
+  startedAt: string;
+  finishedAt: string;
+  data: TransportState;
+  evidence: Evidence[];
+}
+
+export interface TransportOperationResult extends Omit<TransportStateResult, "data"> {
+  data: {
+    requestedState: "playing" | "stopped";
+    commandDispatched: boolean;
+    state: TransportState;
+  };
+}
+
 export interface LogicBridge {
   doctor(request: {
     protocolVersion: typeof BRIDGE_PROTOCOL_VERSION;
@@ -75,6 +101,16 @@ export interface LogicBridge {
     maxDepth: number;
     maxNodes: number;
   }): Promise<AXInspectionResult>;
+  transportState(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION;
+    operationId: string;
+  }): Promise<TransportStateResult>;
+  setTransportPlaying(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION;
+    operationId: string;
+    playing: boolean;
+    timeoutMs: number;
+  }): Promise<TransportOperationResult>;
 }
 
 export interface LogicMcpServerDependencies {
@@ -143,6 +179,28 @@ const axOutputSchema = z.object({
   evidence: z.array(evidenceSchema).min(1),
 });
 
+const transportStateSchema = z.object({
+  playing: z.enum(["playing", "stopped", "unknown"]),
+  cycle: z.enum(["enabled", "disabled", "unknown"]),
+  recordReady: z.enum(["ready", "not_ready", "unknown"]),
+  observedAt: z.iso.datetime().nullable(),
+});
+
+const transportOutputSchema = z.object({
+  operationId: z.string(),
+  status: z.enum(["succeeded", "partial", "failed", "cancelled", "timed_out"]),
+  reliability: z.enum([
+    "verified_deterministic",
+    "verified_ui_driven",
+    "best_effort",
+    "unsupported",
+  ]),
+  requestedState: z.enum(["playing", "stopped"]),
+  commandDispatched: z.boolean(),
+  state: transportStateSchema,
+  evidence: z.array(evidenceSchema),
+});
+
 export function createLogicMcpServer({
   bridge,
   createOperationId = randomUUID,
@@ -186,6 +244,85 @@ export function createLogicMcpServer({
       return {
         content: [{ type: "text", text: summary }],
         structuredContent,
+      };
+    },
+  );
+
+  const registerTransportTool = (
+    name: "logic_play" | "logic_stop",
+    playing: boolean,
+  ) => server.registerTool(
+    name,
+    {
+      title: playing ? "Play Logic transport" : "Stop Logic transport",
+      description: playing
+        ? "Start Logic playback and verify the playing state from Mackie Control feedback."
+        : "Stop Logic playback and verify the stopped state from Mackie Control feedback.",
+      inputSchema: z.object({
+        timeoutMs: z.number().int().min(100).max(5000).default(1500),
+      }),
+      outputSchema: transportOutputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ timeoutMs }) => {
+      const result = await bridge.setTransportPlaying({
+        protocolVersion: BRIDGE_PROTOCOL_VERSION,
+        operationId: createOperationId(),
+        playing,
+        timeoutMs,
+      });
+      const structuredContent = {
+        operationId: result.operationId,
+        status: result.status,
+        reliability: result.reliability,
+        requestedState: result.data.requestedState,
+        commandDispatched: result.data.commandDispatched,
+        state: result.data.state,
+        evidence: result.evidence,
+      };
+      return {
+        content: [{
+          type: "text",
+          text: `Logic transport is ${result.data.state.playing} (${result.status}).`,
+        }],
+        structuredContent,
+      };
+    },
+  );
+
+  registerTransportTool("logic_play", true);
+  registerTransportTool("logic_stop", false);
+
+  server.registerResource(
+    "logic_transport_state",
+    "logic://transport/state",
+    {
+      title: "Logic transport state",
+      description: "Observed playback, cycle, and record-readiness state from Mackie Control feedback.",
+      mimeType: "application/json",
+    },
+    async (uri) => {
+      const result = await bridge.transportState({
+        protocolVersion: BRIDGE_PROTOCOL_VERSION,
+        operationId: createOperationId(),
+      });
+      return {
+        contents: [{
+          uri: uri.href,
+          mimeType: "application/json",
+          text: JSON.stringify({
+            operationId: result.operationId,
+            status: result.status,
+            reliability: result.reliability,
+            state: result.data,
+            evidence: result.evidence,
+          }),
+        }],
       };
     },
   );

@@ -4,6 +4,8 @@ import type {
   AXInspectionResult,
   DoctorResult,
   LogicBridge,
+  TransportOperationResult,
+  TransportStateResult,
 } from "./server.js";
 
 export interface UnixSocketLogicBridgeOptions {
@@ -34,6 +36,22 @@ export class UnixSocketLogicBridge implements LogicBridge {
     maxNodes: number;
   }): Promise<AXInspectionResult> {
     return this.#request("logic.inspectUI", request);
+  }
+
+  transportState(request: {
+    protocolVersion: "1.0.0";
+    operationId: string;
+  }): Promise<TransportStateResult> {
+    return this.#request("logic.transport.state", request);
+  }
+
+  setTransportPlaying(request: {
+    protocolVersion: "1.0.0";
+    operationId: string;
+    playing: boolean;
+    timeoutMs: number;
+  }): Promise<TransportOperationResult> {
+    return this.#request("logic.transport.setPlaying", request);
   }
 
   #request<Result>(method: string, params: object): Promise<Result> {

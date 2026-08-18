@@ -119,6 +119,27 @@
       },
       "additionalProperties": false
     },
+    "transportStateData": {
+      "type": "object",
+      "required": ["playing", "cycle", "recordReady", "observedAt"],
+      "properties": {
+        "playing": { "enum": ["playing", "stopped", "unknown"] },
+        "cycle": { "enum": ["enabled", "disabled", "unknown"] },
+        "recordReady": { "enum": ["ready", "not_ready", "unknown"] },
+        "observedAt": { "type": ["string", "null"], "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "transportOperationData": {
+      "type": "object",
+      "required": ["requestedState", "commandDispatched", "state"],
+      "properties": {
+        "requestedState": { "enum": ["playing", "stopped"] },
+        "commandDispatched": { "type": "boolean" },
+        "state": { "$ref": "#/$defs/transportStateData" }
+      },
+      "additionalProperties": false
+    },
     "operationResult": {
       "type": "object",
       "required": [
@@ -150,7 +171,9 @@
         "data": {
           "oneOf": [
             { "$ref": "#/$defs/doctorData" },
-            { "$ref": "#/$defs/axSnapshotData" }
+            { "$ref": "#/$defs/axSnapshotData" },
+            { "$ref": "#/$defs/transportStateData" },
+            { "$ref": "#/$defs/transportOperationData" }
           ]
         },
         "evidence": {
@@ -211,10 +234,52 @@
       },
       "additionalProperties": false
     },
+    "transportStateRequest": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/jsonRpcId" },
+        "method": { "const": "logic.transport.state" },
+        "params": {
+          "type": "object",
+          "required": ["protocolVersion", "operationId"],
+          "properties": {
+            "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+            "operationId": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "transportSetPlayingRequest": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/jsonRpcId" },
+        "method": { "const": "logic.transport.setPlaying" },
+        "params": {
+          "type": "object",
+          "required": ["protocolVersion", "operationId", "playing", "timeoutMs"],
+          "properties": {
+            "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+            "operationId": { "type": "string", "minLength": 1 },
+            "playing": { "type": "boolean" },
+            "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 5000 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "request": {
       "oneOf": [
         { "$ref": "#/$defs/doctorRequest" },
-        { "$ref": "#/$defs/inspectUIRequest" }
+        { "$ref": "#/$defs/inspectUIRequest" },
+        { "$ref": "#/$defs/transportStateRequest" },
+        { "$ref": "#/$defs/transportSetPlayingRequest" }
       ]
     },
     "response": {
