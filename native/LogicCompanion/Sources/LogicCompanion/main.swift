@@ -22,6 +22,7 @@ private func resolveSocketPath() -> String {
 private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegate {
     private let socketPath: String
     private let router: BridgeRouter
+    private let midiOwner: VirtualMIDIEndpointOwner
     private let systemObserver = MacSystemObserver()
     private let testModeController = ExclusiveTestModeController()
     private lazy var safetyMonitor = AutomationSafetyMonitor(
@@ -41,9 +42,14 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
     private var statusTimer: Timer?
     private var safetyTimer: Timer?
 
-    init(socketPath: String, router: BridgeRouter) {
+    init(
+        socketPath: String,
+        router: BridgeRouter,
+        midiOwner: VirtualMIDIEndpointOwner
+    ) {
         self.socketPath = socketPath
         self.router = router
+        self.midiOwner = midiOwner
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -205,6 +211,16 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
 }
 
 private let diagnosticsEnabled = ProcessInfo.processInfo.environment["LOGIC_ENABLE_DIAGNOSTICS"] == "1"
+private let midiOwner: VirtualMIDIEndpointOwner = {
+    do {
+        return try VirtualMIDIEndpointOwner()
+    } catch {
+        FileHandle.standardError.write(
+            Data("logic-companion: failed to create virtual MIDI endpoints: \(error)\n".utf8)
+        )
+        exit(70)
+    }
+}()
 private let router = BridgeRouter(
     doctor: Doctor(system: MacSystemObserver()),
     diagnosticsEnabled: diagnosticsEnabled
@@ -212,7 +228,8 @@ private let router = BridgeRouter(
 private let application = NSApplication.shared
 private let delegate = CompanionApplicationDelegate(
     socketPath: resolveSocketPath(),
-    router: router
+    router: router,
+    midiOwner: midiOwner
 )
 application.delegate = delegate
 application.run()
