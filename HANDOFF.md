@@ -4,7 +4,8 @@
 
 - Repository: `cotyledonlab/logic-llm-connector` (private)
 - Branch: `main`
-- Last completed implementation commit: `d66cca8`
+- Last completed implementation commit: `6315bab`
+- Last completed acceptance commit: `05228b1`
 - Specification: [`SPEC.md`](SPEC.md)
 - Delivery status: [`docs/tickets/README.md`](docs/tickets/README.md)
 - Expected worktree state after this handoff commit: clean and pushed
@@ -17,9 +18,28 @@
 - 0004 — complete MCP-to-Swift real-Logic tracer bullet
 - 0005 — certificate-signed Companion app with stable bundle identity
 - 0006 — permission readiness and restricted Accessibility inspection
+- 0006b — visible status and Exclusive Test Mode safety state
 
 Ticket 0006 was deliberately split after its tracer bullet proved that AX
 inspection and mutable automation safety are separate vertical slices.
+
+### Exclusive Test Mode
+
+The Companion now runs as a menu-bar app and visibly reports native connection,
+Logic running state, and automation state. The safety controller:
+
+- defaults to inactive after every launch
+- requires Accessibility readiness and a Test Project policy context
+- bounds activation to at most one hour and expires automatically
+- blocks new UI operations while paused
+- cancels registered pending work on environmental interruption or emergency stop
+- observes Logic focus loss, unexpected modal windows, and recent keyboard or
+  mouse-button input
+
+The menu uses a persistent red `TEST` label with a countdown while active and an
+orange `PAUSED` label with the reason after an interruption. Starting Test Mode
+is intentionally unavailable until ticket 0010 supplies a verified Test Project
+policy context.
 
 ## Current verified capabilities
 
@@ -72,30 +92,32 @@ The final run passed:
 
 - 5 JSON Schema contract tests
 - 2 MCP client tests
-- 7 discovered Swift tests, with real-Logic-only cases skipped in the ordinary
-  native suite
+- 13 discovered Swift tests, with 3 real-Logic-only cases skipped in the
+  ordinary native suite
 - certificate-backed package identity test
-- packaged, full-stack real-Logic integration test covering Doctor, default
-  diagnostic denial, diagnostic opt-in, and bounded AX inspection
+- packaged, full-stack real-Logic integration tests covering Doctor, default
+  diagnostic denial, diagnostic opt-in, bounded AX inspection, focus loss, and
+  emergency stop
 
 `npm run test:integration` sets `LOGIC_INTEGRATION_TEST=1` and exercises the
 running Logic installation through the packaged Companion.
 
 ## Next ticket
 
-Start [`0006b — Add visible status and Exclusive Test Mode`](docs/tickets/0006b-exclusive-test-mode.md).
+Start [`0007 — Create the virtual MIDI endpoint`](docs/tickets/0007-virtual-midi-endpoint.md).
 
 Recommended first red→green slice:
 
-1. Add a deterministic Swift test for safety states: inactive → active with a
-   deadline → paused → resumed → emergency-stopped.
-2. Implement a thread-safe safety-state module with injected time.
-3. Make the default after launch inactive and make expiration automatic.
-4. Only then add the menu-bar adapter that renders connection, Logic, Test Mode,
-   pause, and emergency-stop state.
+1. Add a deterministic Swift test for stable virtual MIDI endpoint names and
+   identity metadata.
+2. Implement the smallest CoreMIDI owner that creates a source and destination
+   without performing Logic UI onboarding.
+3. Add a non-blocking receive handoff and loopback test.
+4. Surface protocol/version compatibility through Doctor before beginning
+   Mackie onboarding.
 
-Ticket 0008 (Mackie onboarding) and ticket 0010 (Test Project lifecycle) now
-depend on 0006b because they will perform UI mutations.
+Ticket 0008 (Mackie onboarding) follows 0007. Ticket 0010 (Test Project
+lifecycle) will supply the policy context that enables Test Mode activation.
 
 ## Important implementation facts
 
@@ -108,6 +130,10 @@ depend on 0006b because they will perform UI mutations.
 - The current Unix socket server processes one request per connection
   sequentially. This is adequate for read-only diagnostics but cancellation and
   concurrent operation handling remain future work.
+- `ExclusiveTestModeController` is the stable safety gate for future mutating
+  adapters. Register pending-operation cancellation before dispatching UI work.
+- `AutomationSafetyMonitor` polls only while Test Mode is active; AppKit renders
+  snapshots but does not own safety transitions.
 - Native socket failures currently return a generic JSON-RPC internal error;
   structured native error mapping is still needed.
 - UI text is intentionally excluded from the diagnostic snapshot. Project
@@ -116,7 +142,8 @@ depend on 0006b because they will perform UI mutations.
 
 ## Do not do next
 
-- Do not begin MIDI or Mackie UI onboarding before ticket 0006b is complete.
+- Do not perform Mackie UI onboarding as part of ticket 0007; create and verify
+  the CoreMIDI endpoints first.
 - Do not mutate the currently open Logic project.
 - Do not add arbitrary AX actions to `logic_inspect_ui`.
 - Do not replace certificate signing with ad-hoc signing; ad-hoc designated

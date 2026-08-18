@@ -1,6 +1,6 @@
 # 0006b — Add visible status and Exclusive Test Mode
 
-Status: Pending
+Status: Complete
 Depends on: 0006
 
 ## Outcome

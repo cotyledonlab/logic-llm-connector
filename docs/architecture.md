@@ -30,6 +30,8 @@ not choose an adapter.
 - Exercise MCP behavior through MCP tools and resources.
 - Exercise the companion through its local bridge interface.
 - Verify supported Logic capabilities against a running Logic installation.
+- Exercise Exclusive Test Mode through its thread-safe controller and injected
+  expiration scheduler; AppKit remains a presentation adapter.
 
 Tests do not reach into private implementation details behind these seams.
 
@@ -40,7 +42,8 @@ The executable plan, acceptance criteria, and current status live in
 roadmap rather than a second status tracker.
 
 1. Foundation, bridge contract, companion skeleton, and doctor
-2. Logic discovery, permissions, test safety, and AX inspection
+2. Logic discovery, permissions, test safety, AX inspection, and visible
+   Exclusive Test Mode
 3. Virtual Mackie Control onboarding and verified transport
 4. Disposable-project lifecycle
 5. Track creation and verified selection

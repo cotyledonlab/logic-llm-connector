@@ -36,9 +36,11 @@ npm run test:integration
 ```
 
 Real-Logic tests will always use disposable fixtures and require explicit test
-mode. The current integration test is read-only: it launches the Swift
-companion, connects over a mode-`0600` Unix socket, and verifies `logic_doctor`
-through a real MCP stdio client against the running Logic installation.
+mode. The current integration tests are read-only: they launch the Swift
+Companion, connect over a mode-`0600` Unix socket, verify `logic_doctor` through
+a real MCP stdio client, inspect a bounded text-free Accessibility snapshot,
+and verify focus-loss and emergency-stop safety against the running Logic
+installation.
 
 ## Current capability
 
@@ -52,6 +54,14 @@ through a real MCP stdio client against the running Logic installation.
 the Companion and MCP server start with `LOGIC_ENABLE_DIAGNOSTICS=1`. Its
 bounded snapshot contains UI roles, identifiers, focus flags, and child counts,
 but deliberately excludes titles, values, descriptions, and UI actions.
+
+The signed Companion runs as a menu-bar app. Its menu continuously reports the
+native connection, whether Logic is running, and Exclusive Test Mode status.
+Active automation is marked with a red `TEST` label and countdown; a safety
+pause is marked in orange with its reason. Pause, resume, and emergency stop are
+available from the menu. Test Mode defaults to inactive, expires after at most
+one hour, and cannot start until Accessibility and Test Project policy readiness
+are both present.
 
 Build and launch the signed Companion, then run the MCP server:
 
