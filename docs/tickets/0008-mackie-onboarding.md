@@ -1,6 +1,6 @@
 # 0008 — Onboard virtual Mackie Control
 
-Status: Pending
+Status: Complete
 Depends on: 0006b, 0007
 
 ## Outcome
@@ -15,3 +15,17 @@ Control endpoint without directly mutating undocumented preference files.
 - Setup is idempotent and detects conflicting assignments.
 - Configuration is verified from Logic UI and MIDI feedback.
 - Teardown/recovery instructions are documented.
+
+## Acceptance evidence
+
+- The certificate-signed Companion is trusted for Accessibility.
+- Logic Pro 12.3's visible Control Surface Setup window reports one Mackie
+  Control with input `Logic LLM Connector Out` and output
+  `Logic LLM Connector In`.
+- Doctor classifies that exact assignment as configured and reports inbound
+  Mackie-compatible CoreMIDI channel-voice and SysEx traffic.
+- The real-Logic integration test asserts the permission, exact UI assignment,
+  and nonzero feedback while managing the packaged Companion lifecycle to
+  avoid stable endpoint identity collisions.
+- Setup, idempotence, conflict recovery, and teardown are documented in
+  [`docs/mackie-control-setup.md`](../mackie-control-setup.md).

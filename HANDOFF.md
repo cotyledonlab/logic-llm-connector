@@ -4,8 +4,8 @@
 
 - Repository: `cotyledonlab/logic-llm-connector` (private)
 - Branch: `main`
-- Last completed implementation commit: `ca0bb09`
-- Last completed acceptance commit: `07d51a7`
+- Last completed implementation commit: `bc06cd9`
+- Last completed acceptance commit: `0ff2a21`
 - Specification: [`SPEC.md`](SPEC.md)
 - Delivery status: [`docs/tickets/README.md`](docs/tickets/README.md)
 - Expected worktree state after this handoff commit: clean and pushed
@@ -20,6 +20,8 @@
 - 0006 — permission readiness and restricted Accessibility inspection
 - 0006b — visible status and Exclusive Test Mode safety state
 - 0007 — stable, recoverable CoreMIDI virtual endpoints
+- 0008 — repeatable virtual Mackie Control onboarding verified through Logic UI
+  and inbound MIDI feedback
 
 Ticket 0006 was deliberately split after its tracer bullet proved that AX
 inspection and mutable automation safety are separate vertical slices.
@@ -57,6 +59,15 @@ handing it to a dedicated dispatch queue. Missing endpoints are observable,
 recreated independently with their stable metadata, and retried by the
 Companion's existing status cadence.
 
+### Mackie Control onboarding
+
+Logic has one persisted Mackie Control assignment with input
+`Logic LLM Connector Out` and output `Logic LLM Connector In`. The Companion
+observes the visible Control Surface Setup window without reading or writing
+Logic preferences, classifies missing/configured/conflicting assignments, and
+records inbound MIDI 1.0 channel-voice and SysEx UMP traffic. Its menu provides
+the idempotent setup guide and visible configuration status.
+
 ## Current verified capabilities
 
 ### `logic_doctor`
@@ -67,6 +78,7 @@ Available by default. It observes:
 - Logic Pro installation, bundle, version, build, and running state
 - Accessibility trust and remediation
 - CoreMIDI MIDI 1.0 protocol compatibility and virtual endpoint readiness
+- the visible Mackie Control assignment and inbound Mackie-compatible feedback
 
 ### `logic_inspect_ui`
 
@@ -109,33 +121,28 @@ The final run passed:
 
 - 5 JSON Schema contract tests
 - 2 MCP client tests
-- 17 discovered Swift tests, with 3 real-Logic-only cases skipped in the
+- 25 discovered Swift tests, with 3 real-Logic-only cases skipped in the
   ordinary native suite
 - certificate-backed package identity test
 - packaged, full-stack real-Logic integration tests covering Doctor, default
   diagnostic denial, diagnostic opt-in, bounded AX inspection, MIDI endpoint
-  readiness, focus loss, and emergency stop
+  readiness, exact Mackie assignment, inbound Mackie feedback, focus loss, and
+  emergency stop
 
 `npm run test:integration` sets `LOGIC_INTEGRATION_TEST=1` and exercises the
 running Logic installation through the packaged Companion.
 
 ## Next ticket
 
-Start [`0008 — Onboard virtual Mackie Control`](docs/tickets/0008-mackie-onboarding.md).
+Start [`0009 — Verified transport`](docs/tickets/0009-verified-transport.md).
 
-Recommended first red→green slice:
+Recommended first red→green slice: define the smallest typed play/stop request
+and result, send it through the established Mackie seam, and verify both Logic's
+transport UI state and returned/observed MIDI feedback. Preserve idempotent stop
+behavior and bounded timeouts before adding location navigation.
 
-1. Add a deterministic Doctor classification for missing, configured, and
-   conflicting Mackie Control assignments.
-2. Implement the smallest read-only Logic observer that detects the expected
-   control surface without writing preference files.
-3. Define a guided setup path for a clean Logic profile and keep it separate
-   from the general Accessibility diagnostic snapshot.
-4. Verify configuration through both specialized Logic UI observations and
-   MIDI feedback before adding transport Operations.
-
-Ticket 0009 (verified transport) follows 0008. Ticket 0010 (Test Project
-lifecycle) will supply the policy context that enables Test Mode activation.
+Ticket 0010 (Test Project lifecycle) will supply the policy context that enables
+Test Mode activation.
 
 ## Important implementation facts
 
@@ -155,6 +162,9 @@ lifecycle) will supply the policy context that enables Test Mode activation.
 - `VirtualMIDIEndpointOwner` is the stable CoreMIDI seam. It uses MIDI 1.0 UMP,
   preserves host timestamps, serializes endpoint access, and hands receive work
   off the CoreMIDI callback thread.
+- `MacMackieControlObserver` is a specialized read-only observer. Its Setup
+  window must remain visible when Doctor or real acceptance tests classify the
+  assignment.
 - The virtual endpoint unique IDs are persisted as source constants, not
   generated at runtime. Do not change them after Logic onboarding begins.
 - Native socket failures currently return a generic JSON-RPC internal error;
@@ -165,9 +175,9 @@ lifecycle) will supply the policy context that enables Test Mode activation.
 
 ## Do not do next
 
-- Do not write Logic preference files directly during Mackie onboarding.
-- Do not send transport or mixer messages until the expected control surface is
-  observed and MIDI feedback verifies it.
+- Do not write Logic preference files directly.
+- Do not add mixer operations while ticket 0009 is establishing verified
+  transport behavior.
 - Do not mutate the currently open Logic project.
 - Do not add arbitrary AX actions to `logic_inspect_ui`.
 - Do not replace certificate signing with ad-hoc signing; ad-hoc designated

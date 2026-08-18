@@ -50,6 +50,7 @@ installation.
 - Logic Pro installation, version, build, and running state
 - Accessibility permission status and remediation
 - CoreMIDI MIDI 1.0 compatibility and virtual endpoint readiness
+- visible Mackie Control assignment state and inbound MIDI feedback
 
 `logic_inspect_ui` is a restricted diagnostic tool. It is absent unless both
 the Companion and MCP server start with `LOGIC_ENABLE_DIAGNOSTICS=1`. Its
@@ -74,6 +75,8 @@ the visible Logic Control Surfaces Setup state as missing, configured, or
 conflicting without reading or writing Logic's preference files. See the
 [Mackie Control setup guide](docs/mackie-control-setup.md) for idempotent setup,
 teardown, and recovery steps.
+Real-Logic acceptance requires both the exact visible port assignment and
+nonzero Mackie-compatible channel-voice or SysEx feedback.
 
 Build and launch the signed Companion, then run the MCP server:
 

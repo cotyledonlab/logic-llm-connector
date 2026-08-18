@@ -14,8 +14,8 @@ passes and the result is committed and pushed.
 | [0006](0006-test-safety-and-ax-inspection.md) | Complete | Permission and safe AX snapshot |
 | [0006b](0006b-exclusive-test-mode.md) | Complete | Visible status and Exclusive Test Mode |
 | [0007](0007-virtual-midi-endpoint.md) | Complete | Persistent CoreMIDI virtual endpoint |
-| [0008](0008-mackie-onboarding.md) | Next | Repeatable Logic control-surface setup |
-| [0009](0009-verified-transport.md) | Pending | Play/stop/location with feedback |
+| [0008](0008-mackie-onboarding.md) | Complete | Repeatable Logic control-surface setup |
+| [0009](0009-verified-transport.md) | Next | Play/stop/location with feedback |
 | [0010](0010-test-project-lifecycle.md) | Pending | Safe open/save/close/reopen |
 | [0011](0011-track-operations.md) | Pending | Track creation and selection |
 | [0012](0012-midi-region-operations.md) | Pending | MIDI creation and editing |
@@ -33,3 +33,4 @@ passes and the result is committed and pushed.
 - `da5aad5` → ticket 0003
 - `b1644cd` → ticket 0004
 - `d0143b3`, `b17666b`, `ca0bb09`, and `07d51a7` → ticket 0007
+- `cfbd6bc`, `1020ec6`, `5bd4749`, `4ce72d7`, `bc06cd9`, and `0ff2a21` → ticket 0008
