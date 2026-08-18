@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -131,6 +131,8 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
   await client.connect(mcpTransport);
   assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), [
     "logic_doctor",
+    "logic_play",
+    "logic_stop",
   ]);
   const mcpResult = await client.callTool({ name: "logic_doctor", arguments: {} });
   assert.equal(mcpResult.isError, undefined);
@@ -139,6 +141,72 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
     | undefined;
   assert.equal(structuredContent?.["status"], "succeeded");
   assert.match(JSON.stringify(structuredContent), /Logic Pro 12\.3/);
+
+  const initialTransport = await bridge.transportState({
+    protocolVersion: "1.0.0",
+    operationId: "transport-initial",
+  });
+  assert.notEqual(
+    initialTransport.data.playing,
+    "unknown",
+    JSON.stringify(initialTransport),
+  );
+  const restorePlaying = initialTransport.data.playing === "playing";
+  try {
+    const stopped = await client.callTool({
+      name: "logic_stop",
+      arguments: { timeoutMs: 1500 },
+    });
+    assert.equal(stopped.isError, undefined, JSON.stringify(stopped.content));
+    assert.equal(
+      (stopped.structuredContent as Record<string, unknown>)?.["status"],
+      "succeeded",
+    );
+
+    const finder = spawnSync("open", ["-a", "Finder"]);
+    assert.equal(finder.status, 0, finder.stderr?.toString());
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    const played = await client.callTool({
+      name: "logic_play",
+      arguments: { timeoutMs: 1500 },
+    });
+    assert.equal(played.isError, undefined, JSON.stringify(played.content));
+    const playedContent = played.structuredContent as Record<string, unknown>;
+    assert.equal(playedContent?.["status"], "succeeded");
+    assert.equal(playedContent?.["reliability"], "verified_deterministic");
+    assert.equal(
+      (playedContent?.["state"] as Record<string, unknown>)?.["playing"],
+      "playing",
+    );
+    assert.match(JSON.stringify(playedContent?.["evidence"]), /Mackie Control feedback/);
+
+    const transportResource = await client.readResource({
+      uri: "logic://transport/state",
+    });
+    const transportContent = transportResource.contents[0];
+    assert.ok(transportContent && "text" in transportContent);
+    assert.equal(JSON.parse(transportContent.text).state.playing, "playing");
+
+    const stoppedAgain = await client.callTool({
+      name: "logic_stop",
+      arguments: { timeoutMs: 1500 },
+    });
+    assert.equal(stoppedAgain.isError, undefined, JSON.stringify(stoppedAgain.content));
+    assert.equal(
+      ((stoppedAgain.structuredContent as Record<string, unknown>)?.["state"] as
+        Record<string, unknown>)?.["playing"],
+      "stopped",
+    );
+  } finally {
+    const restored = await bridge.setTransportPlaying({
+      protocolVersion: "1.0.0",
+      operationId: "transport-restore",
+      playing: restorePlaying,
+      timeoutMs: 1500,
+    });
+    assert.equal(restored.status, "succeeded", JSON.stringify(restored));
+  }
   await client.close();
 
   const diagnosticTransport = new StdioClientTransport({
@@ -160,6 +228,8 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
   await diagnosticClient.connect(diagnosticTransport);
   assert.deepEqual((await diagnosticClient.listTools()).tools.map((tool) => tool.name), [
     "logic_doctor",
+    "logic_play",
+    "logic_stop",
     "logic_inspect_ui",
   ]);
   const inspection = await diagnosticClient.callTool({
