@@ -35,6 +35,10 @@ Tests do not reach into private implementation details behind these seams.
 
 ## Delivery slices
 
+The executable plan, acceptance criteria, and current status live in
+[`docs/tickets`](tickets/README.md). The sequence below is the architecture-level
+roadmap rather than a second status tracker.
+
 1. Foundation, bridge contract, companion skeleton, and doctor
 2. Logic discovery, permissions, test safety, and AX inspection
 3. Virtual Mackie Control onboarding and verified transport

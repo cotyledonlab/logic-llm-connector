@@ -19,7 +19,9 @@ integration test.
 - `tests`: contract, protocol, and real-Logic acceptance tests
 
 See [docs/architecture.md](docs/architecture.md) for the invariants and test
-seams.
+seams. [SPEC.md](SPEC.md) is the accepted product and technical specification;
+[docs/tickets](docs/tickets/README.md) is the ordered delivery plan and status
+source.
 
 ## Development
 
