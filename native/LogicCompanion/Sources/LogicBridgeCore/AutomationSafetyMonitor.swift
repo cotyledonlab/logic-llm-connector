@@ -9,18 +9,25 @@ public protocol AutomationSafetyObserving: Sendable {
 public struct AutomationSafetyMonitor: Sendable {
     private let controller: ExclusiveTestModeController
     private let observer: any AutomationSafetyObserving
+    private let policyContextReady: @Sendable () -> Bool
 
     public init(
         controller: ExclusiveTestModeController,
-        observer: any AutomationSafetyObserving
+        observer: any AutomationSafetyObserving,
+        policyContextReady: @escaping @Sendable () -> Bool = { true }
     ) {
         self.controller = controller
         self.observer = observer
+        self.policyContextReady = policyContextReady
     }
 
     public func poll() {
-        guard controller.snapshot.phase == .active,
-              let interruption = observer.currentInterruption() else { return }
+        guard controller.snapshot.phase == .active else { return }
+        guard policyContextReady() else {
+            controller.observe(.projectIdentityChanged)
+            return
+        }
+        guard let interruption = observer.currentInterruption() else { return }
         controller.observe(interruption)
     }
 }

@@ -87,6 +87,7 @@ public struct CompanionStatusPresentation: Sendable, Equatable {
         case .focusLost: "Logic focus lost"
         case .unexpectedModal: "Unexpected modal"
         case .humanInput: "Human input observed"
+        case .projectIdentityChanged: "Test Project changed"
         case nil: "Safety pause"
         }
     }

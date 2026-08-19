@@ -16,12 +16,14 @@ public enum ExclusiveTestModePauseReason: String, Sendable, Equatable {
     case focusLost
     case unexpectedModal
     case humanInput
+    case projectIdentityChanged
 }
 
 public enum AutomationSafetyInterruption: Sendable, Equatable {
     case focusLost
     case unexpectedModal
     case humanInput
+    case projectIdentityChanged
 }
 
 public struct ExclusiveTestModeReadiness: Sendable, Equatable {
@@ -141,7 +143,13 @@ public final class ExclusiveTestModeController: @unchecked Sendable {
         }
     }
 
-    public func resume() throws {
+    public func resume(readiness: ExclusiveTestModeReadiness) throws {
+        guard readiness.accessibilityReady else {
+            throw ExclusiveTestModeError.accessibilityNotReady
+        }
+        guard readiness.testProjectPolicyContext else {
+            throw ExclusiveTestModeError.testProjectPolicyContextMissing
+        }
         try lock.withLock {
             guard currentSnapshot.phase == .paused else {
                 throw ExclusiveTestModeError.notActive
@@ -164,6 +172,7 @@ public final class ExclusiveTestModeController: @unchecked Sendable {
         case .focusLost: .focusLost
         case .unexpectedModal: .unexpectedModal
         case .humanInput: .humanInput
+        case .projectIdentityChanged: .projectIdentityChanged
         }
         let cancellations = lock.withLock {
             guard currentSnapshot.phase == .active else { return [() -> Void]() }

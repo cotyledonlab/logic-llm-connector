@@ -25,10 +25,14 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
     private let midiOwner: VirtualMIDIEndpointOwner
     private let systemObserver = MacSystemObserver()
     private let mackieObserver = MacMackieControlObserver()
+    private let projectLifecycle: TestProjectLifecycleController
     private let testModeController = ExclusiveTestModeController()
     private lazy var safetyMonitor = AutomationSafetyMonitor(
         controller: testModeController,
-        observer: MacAutomationSafetyObserver()
+        observer: MacAutomationSafetyObserver(),
+        policyContextReady: { [projectLifecycle] in
+            projectLifecycle.hasVerifiedPolicyContext
+        }
     )
 
     private var connectionStatus = CompanionConnectionStatus.starting
@@ -37,7 +41,9 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
     private var connectionItem: NSMenuItem?
     private var logicItem: NSMenuItem?
     private var mackieItem: NSMenuItem?
+    private var projectItem: NSMenuItem?
     private var testModeItem: NSMenuItem?
+    private var startItem: NSMenuItem?
     private var pauseItem: NSMenuItem?
     private var resumeItem: NSMenuItem?
     private var emergencyStopItem: NSMenuItem?
@@ -47,11 +53,13 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
     init(
         socketPath: String,
         router: BridgeRouter,
-        midiOwner: VirtualMIDIEndpointOwner
+        midiOwner: VirtualMIDIEndpointOwner,
+        projectLifecycle: TestProjectLifecycleController
     ) {
         self.socketPath = socketPath
         self.router = router
         self.midiOwner = midiOwner
+        self.projectLifecycle = projectLifecycle
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -89,8 +97,9 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
         let connectionItem = NSMenuItem(title: "Connection: Starting", action: nil, keyEquivalent: "")
         let logicItem = NSMenuItem(title: "Logic Pro: Checking", action: nil, keyEquivalent: "")
         let mackieItem = NSMenuItem(title: "Mackie Control: Checking", action: nil, keyEquivalent: "")
+        let projectItem = NSMenuItem(title: "Test Project: None", action: nil, keyEquivalent: "")
         let testModeItem = NSMenuItem(title: "Test Mode: Inactive", action: nil, keyEquivalent: "")
-        [connectionItem, logicItem, mackieItem, testModeItem].forEach { $0.isEnabled = false }
+        [connectionItem, logicItem, mackieItem, projectItem, testModeItem].forEach { $0.isEnabled = false }
 
         let mackieSetupItem = NSMenuItem(
             title: "Mackie Control Setup Guide…",
@@ -99,12 +108,12 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
         )
         mackieSetupItem.target = self
 
-        let unavailableStartItem = NSMenuItem(
-            title: "Start Test Mode (Test Project Required)",
-            action: nil,
+        let startItem = NSMenuItem(
+            title: "Start Test Mode (1 Hour)",
+            action: #selector(startTestMode),
             keyEquivalent: ""
         )
-        unavailableStartItem.isEnabled = false
+        startItem.target = self
 
         let pauseItem = NSMenuItem(
             title: "Pause Automation",
@@ -130,8 +139,9 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
         menu.addItem(mackieItem)
         menu.addItem(mackieSetupItem)
         menu.addItem(.separator())
+        menu.addItem(projectItem)
         menu.addItem(testModeItem)
-        menu.addItem(unavailableStartItem)
+        menu.addItem(startItem)
         menu.addItem(pauseItem)
         menu.addItem(resumeItem)
         menu.addItem(emergencyStopItem)
@@ -143,7 +153,9 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
         self.connectionItem = connectionItem
         self.logicItem = logicItem
         self.mackieItem = mackieItem
+        self.projectItem = projectItem
         self.testModeItem = testModeItem
+        self.startItem = startItem
         self.pauseItem = pauseItem
         self.resumeItem = resumeItem
         self.emergencyStopItem = emergencyStopItem
@@ -189,7 +201,12 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
         connectionItem?.title = presentation.connectionTitle
         logicItem?.title = presentation.logicTitle
         mackieItem?.title = mackieStatusTitle()
+        let hasPolicyContext = projectLifecycle.hasVerifiedPolicyContext
+        projectItem?.title = hasPolicyContext ? "Test Project: Verified" : "Test Project: None"
         testModeItem?.title = presentation.testModeTitle
+        startItem?.isEnabled = testModeController.snapshot.phase == .inactive
+            && hasPolicyContext
+            && systemObserver.accessibilityTrusted
         pauseItem?.isEnabled = presentation.canPause
         resumeItem?.isEnabled = presentation.canResume
         emergencyStopItem?.isEnabled = presentation.canEmergencyStop
@@ -220,8 +237,22 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
         refreshStatus()
     }
 
+    @objc private func startTestMode() {
+        try? testModeController.activate(
+            duration: ExclusiveTestModeController.maximumDuration,
+            readiness: ExclusiveTestModeReadiness(
+                accessibilityReady: systemObserver.accessibilityTrusted,
+                testProjectPolicyContext: projectLifecycle.hasVerifiedPolicyContext
+            )
+        )
+        refreshStatus()
+    }
+
     @objc private func resumeAutomation() {
-        try? testModeController.resume()
+        try? testModeController.resume(readiness: ExclusiveTestModeReadiness(
+            accessibilityReady: systemObserver.accessibilityTrusted,
+            testProjectPolicyContext: projectLifecycle.hasVerifiedPolicyContext
+        ))
         refreshStatus()
     }
 
@@ -295,7 +326,8 @@ private let application = NSApplication.shared
 private let delegate = CompanionApplicationDelegate(
     socketPath: resolveSocketPath(),
     router: router,
-    midiOwner: midiOwner
+    midiOwner: midiOwner,
+    projectLifecycle: projectLifecycle
 )
 application.delegate = delegate
 application.run()

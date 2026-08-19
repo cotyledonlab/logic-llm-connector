@@ -46,7 +46,10 @@ func exclusiveTestModeTransitions() throws {
     #expect(controller.snapshot.phase == .paused)
     #expect(!controller.canBeginUIOperation)
 
-    try controller.resume()
+    try controller.resume(readiness: ExclusiveTestModeReadiness(
+        accessibilityReady: true,
+        testProjectPolicyContext: true
+    ))
     #expect(controller.snapshot.phase == .active)
     #expect(controller.canBeginUIOperation)
 
@@ -128,4 +131,12 @@ func exclusiveTestModeObservesFocusLoss() throws {
     #expect(controller.snapshot.pauseReason == .focusLost)
     #expect(!controller.canBeginUIOperation)
     #expect(cancelled)
+
+    #expect(throws: ExclusiveTestModeError.testProjectPolicyContextMissing) {
+        try controller.resume(readiness: ExclusiveTestModeReadiness(
+            accessibilityReady: true,
+            testProjectPolicyContext: false
+        ))
+    }
+    #expect(controller.snapshot.phase == .paused)
 }
