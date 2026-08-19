@@ -7,6 +7,7 @@ private final class FakeProjectScripting: LogicProjectScripting, @unchecked Send
     private let lock = NSLock()
     private var current: LogicProjectIdentity?
     var openError: LogicProjectScriptingError?
+    var publishOpenIdentity = true
     var openedPaths: [String] = []
     var closeCount = 0
 
@@ -22,16 +23,18 @@ private final class FakeProjectScripting: LogicProjectScripting, @unchecked Send
         if let openError { throw openError }
         lock.withLock {
             openedPaths.append(url.path)
-            current = LogicProjectIdentity(
-                name: url.deletingPathExtension().lastPathComponent,
-                path: url.path,
-                modified: false,
-                observedAt: Date(timeIntervalSince1970: 10)
-            )
+            if publishOpenIdentity {
+                current = LogicProjectIdentity(
+                    name: url.deletingPathExtension().lastPathComponent,
+                    path: url.path,
+                    modified: false,
+                    observedAt: Date(timeIntervalSince1970: 10)
+                )
+            }
         }
     }
 
-    func save() throws {
+    func save(projectAt _: URL) throws {
         lock.withLock {
             guard let current else { return }
             self.current = LogicProjectIdentity(
@@ -43,7 +46,7 @@ private final class FakeProjectScripting: LogicProjectScripting, @unchecked Send
         }
     }
 
-    func closeWithoutSaving() throws {
+    func closeWithoutSaving(projectAt _: URL) throws {
         lock.withLock {
             closeCount += 1
             current = nil
@@ -181,6 +184,48 @@ func testProjectFailedOpenCleansCopy() throws {
     #expect(result.data.failure == .dialogPresented)
     #expect(result.data.cleanupPerformed)
     #expect(!FileManager.default.fileExists(atPath: fixture.testRoot.appendingPathComponent("copy-1").path))
+}
+
+@Test("timed-out open retains its workspace until the delayed document can be closed")
+func testTimedOutOpenRetainsWorkspaceUntilReconciled() throws {
+    let scripting = FakeProjectScripting()
+    scripting.publishOpenIdentity = false
+    let fixture = try LifecycleFixture(scripting: scripting)
+    defer { fixture.remove() }
+
+    let opened = fixture.controller.openFixture(
+        at: fixture.source.path,
+        operationID: "open-1",
+        timeoutMilliseconds: 0
+    )
+    let managedPath = try #require(opened.data.managedProjectPath)
+
+    #expect(opened.status == .failed)
+    #expect(opened.data.failure == .postconditionFailed)
+    #expect(!opened.data.cleanupPerformed)
+    #expect(FileManager.default.fileExists(atPath: managedPath))
+
+    let pendingCleanup = fixture.controller.cleanup(
+        operationID: "cleanup-pending",
+        timeoutMilliseconds: 0
+    )
+    #expect(pendingCleanup.status == .failed)
+    #expect(pendingCleanup.data.failure == .cleanupFailed)
+    #expect(FileManager.default.fileExists(atPath: managedPath))
+
+    scripting.replaceCurrent(with: LogicProjectIdentity(
+        name: "Fixture.logicx",
+        path: managedPath,
+        modified: false,
+        observedAt: Date(timeIntervalSince1970: 40)
+    ))
+    let reconciled = fixture.controller.cleanup(
+        operationID: "cleanup-reconciled",
+        timeoutMilliseconds: 10
+    )
+    #expect(reconciled.status == .succeeded)
+    #expect(reconciled.data.cleanupPerformed)
+    #expect(!FileManager.default.fileExists(atPath: managedPath))
 }
 
 @Test("managed operations reject an observed project identity change")

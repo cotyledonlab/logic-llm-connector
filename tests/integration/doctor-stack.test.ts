@@ -346,6 +346,9 @@ test("MCP safely opens, saves, closes, reopens, and cleans a copied Test Project
     await rm(socketPath, { force: true });
   });
   await waitForSocket(socketPath);
+  // Logic processes the freshly recreated virtual MIDI endpoints asynchronously.
+  // Let that startup work settle before dispatching the first document command.
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
 
   const nativeBridge = new UnixSocketLogicBridge({ socketPath, timeoutMs: 35_000 });
   const initial = await nativeBridge.projectState({

@@ -117,8 +117,8 @@ public enum LogicProjectScriptingError: Error, Equatable {
 public protocol LogicProjectScripting: Sendable {
     func observe() throws -> LogicProjectIdentity?
     func open(projectAt url: URL) throws
-    func save() throws
-    func closeWithoutSaving() throws
+    func save(projectAt url: URL) throws
+    func closeWithoutSaving(projectAt url: URL) throws
 }
 
 public protocol ProjectLifecycleControlling: Sendable {
@@ -145,6 +145,7 @@ public final class TestProjectLifecycleController: ProjectLifecycleControlling, 
     private let sleep: @Sendable (TimeInterval) -> Void
     private let makeID: @Sendable () -> String
     private var managedProjectURL: URL?
+    private var pendingOpenURL: URL?
 
     public init(
         rootURL: URL = TestProjectLifecycleController.defaultRootURL,
@@ -236,21 +237,24 @@ public final class TestProjectLifecycleController: ProjectLifecycleControlling, 
             return failureResult(operationID: operationID, action: .open, startedAt: startedAt, failure: .commandFailed, cleanupPerformed: true)
         }
 
-        lock.withLock { managedProjectURL = destination }
+        lock.withLock {
+            managedProjectURL = destination
+            pendingOpenURL = destination
+        }
         do {
             try scripting.open(projectAt: destination)
             guard let observed = waitForIdentity(destination, timeoutMilliseconds: timeoutMilliseconds) else {
-                let cleaned = rollback(destination: destination, workspace: workspace, timeoutMilliseconds: timeoutMilliseconds)
                 return failureResult(
                     operationID: operationID,
                     action: .open,
                     startedAt: startedAt,
                     failure: .postconditionFailed,
-                    managedURL: cleaned ? nil : destination,
+                    managedURL: destination,
                     commandDispatched: true,
-                    cleanupPerformed: cleaned
+                    cleanupPerformed: false
                 )
             }
+            lock.withLock { pendingOpenURL = nil }
             return result(
                 operationID: operationID,
                 action: .open,
@@ -263,6 +267,7 @@ public final class TestProjectLifecycleController: ProjectLifecycleControlling, 
                 policyContext: true
             )
         } catch {
+            lock.withLock { pendingOpenURL = nil }
             let cleaned = rollback(destination: destination, workspace: workspace, timeoutMilliseconds: timeoutMilliseconds)
             return failureResult(
                 operationID: operationID,
@@ -277,8 +282,8 @@ public final class TestProjectLifecycleController: ProjectLifecycleControlling, 
     }
 
     public func save(operationID: String, timeoutMilliseconds: Int) -> ProjectLifecycleResult {
-        mutateManagedProject(action: .save, operationID: operationID, timeoutMilliseconds: timeoutMilliseconds) { identity, _ in
-            try scripting.save()
+        mutateManagedProject(action: .save, operationID: operationID, timeoutMilliseconds: timeoutMilliseconds) { identity, managed in
+            try scripting.save(projectAt: managed)
             return waitFor(timeoutMilliseconds: timeoutMilliseconds) {
                 guard let observed = try? scripting.observe() else { return nil }
                 return samePath(observed.path, identity.path) && !observed.modified ? observed : nil
@@ -287,9 +292,9 @@ public final class TestProjectLifecycleController: ProjectLifecycleControlling, 
     }
 
     public func close(operationID: String, timeoutMilliseconds: Int) -> ProjectLifecycleResult {
-        mutateManagedProject(action: .close, operationID: operationID, timeoutMilliseconds: timeoutMilliseconds) { identity, _ in
+        mutateManagedProject(action: .close, operationID: operationID, timeoutMilliseconds: timeoutMilliseconds) { identity, managed in
             guard !identity.modified else { throw ProjectMutationFailure.unsavedChanges }
-            try scripting.closeWithoutSaving()
+            try scripting.closeWithoutSaving(projectAt: managed)
             let closed: LogicProjectIdentity? = waitFor(timeoutMilliseconds: timeoutMilliseconds) {
                 do {
                     return try scripting.observe() == nil ? identity : nil
@@ -310,10 +315,12 @@ public final class TestProjectLifecycleController: ProjectLifecycleControlling, 
             if try scripting.observe() != nil {
                 return failureResult(operationID: operationID, action: .reopen, startedAt: startedAt, failure: .userProjectOpen, managedURL: managed)
             }
+            lock.withLock { pendingOpenURL = managed }
             try scripting.open(projectAt: managed)
             guard let observed = waitForIdentity(managed, timeoutMilliseconds: timeoutMilliseconds) else {
                 return failureResult(operationID: operationID, action: .reopen, startedAt: startedAt, failure: .postconditionFailed, managedURL: managed, commandDispatched: true)
             }
+            lock.withLock { pendingOpenURL = nil }
             return result(
                 operationID: operationID,
                 action: .reopen,
@@ -326,6 +333,7 @@ public final class TestProjectLifecycleController: ProjectLifecycleControlling, 
                 policyContext: true
             )
         } catch {
+            lock.withLock { pendingOpenURL = nil }
             return failureResult(operationID: operationID, action: .reopen, startedAt: startedAt, failure: map(error), managedURL: managed, commandDispatched: true)
         }
     }
@@ -351,7 +359,8 @@ public final class TestProjectLifecycleController: ProjectLifecycleControlling, 
                 guard samePath(observed.path, managed.path) else {
                     return failureResult(operationID: operationID, action: .cleanup, startedAt: startedAt, failure: .userProjectOpen, managedURL: managed)
                 }
-                try scripting.closeWithoutSaving()
+                lock.withLock { pendingOpenURL = nil }
+                try scripting.closeWithoutSaving(projectAt: managed)
                 commandDispatched = true
                 let closed: Bool? = waitFor(timeoutMilliseconds: timeoutMilliseconds, condition: {
                     do {
@@ -363,9 +372,20 @@ public final class TestProjectLifecycleController: ProjectLifecycleControlling, 
                 guard closed != nil else {
                     return failureResult(operationID: operationID, action: .cleanup, startedAt: startedAt, failure: .postconditionFailed, managedURL: managed, commandDispatched: true)
                 }
+            } else if lock.withLock({ pendingOpenURL != nil }) {
+                return failureResult(
+                    operationID: operationID,
+                    action: .cleanup,
+                    startedAt: startedAt,
+                    failure: .cleanupFailed,
+                    managedURL: managed
+                )
             }
             try fileManager.removeItem(at: managed.deletingLastPathComponent())
-            lock.withLock { managedProjectURL = nil }
+            lock.withLock {
+                managedProjectURL = nil
+                pendingOpenURL = nil
+            }
             return result(
                 operationID: operationID,
                 action: .cleanup,
@@ -436,7 +456,7 @@ public final class TestProjectLifecycleController: ProjectLifecycleControlling, 
         do {
             if let current = try scripting.observe() {
                 guard samePath(current.path, destination.path) else { return false }
-                try scripting.closeWithoutSaving()
+                try scripting.closeWithoutSaving(projectAt: destination)
                 let closed: Bool? = waitFor(timeoutMilliseconds: timeoutMilliseconds) {
                     do {
                         return try scripting.observe() == nil ? true : nil
@@ -447,7 +467,10 @@ public final class TestProjectLifecycleController: ProjectLifecycleControlling, 
                 guard closed == true else { return false }
             }
             try fileManager.removeItem(at: workspace)
-            lock.withLock { managedProjectURL = nil }
+            lock.withLock {
+                managedProjectURL = nil
+                pendingOpenURL = nil
+            }
             return true
         } catch {
             return false
@@ -658,12 +681,12 @@ public struct MacLogicProjectScripting: LogicProjectScripting {
         """)
     }
 
-    public func save() throws {
-        _ = try execute("ignoring application responses\ntell application id \"com.apple.logic10\" to save front document\nend ignoring")
+    public func save(projectAt url: URL) throws {
+        _ = try execute("ignoring application responses\ntell application id \"com.apple.logic10\" to save (first document whose path is \"\(escape(url.path))\")\nend ignoring")
     }
 
-    public func closeWithoutSaving() throws {
-        _ = try execute("ignoring application responses\ntell application id \"com.apple.logic10\" to close front document saving no\nend ignoring")
+    public func closeWithoutSaving(projectAt url: URL) throws {
+        _ = try execute("ignoring application responses\ntell application id \"com.apple.logic10\" to close (first document whose path is \"\(escape(url.path))\") saving no\nend ignoring")
     }
 
     private func execute(_ source: String) throws -> String {
