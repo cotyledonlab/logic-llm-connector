@@ -147,6 +147,37 @@ export interface ProjectLifecycleResult extends Omit<TransportStateResult, "data
   };
 }
 
+export type LogicTrackType = "software_instrument" | "audio" | "external_midi" | "unknown";
+export type TrackOperationAction =
+  | "observe" | "create" | "rename" | "select" | "duplicate" | "reorder" | "delete";
+export type TrackOperationFailure =
+  | "project_policy_missing" | "test_mode_inactive" | "accessibility_unavailable"
+  | "logic_not_running" | "logic_not_focused" | "track_not_found"
+  | "unsupported_track_type" | "invalid_name" | "invalid_position"
+  | "confirmation_required" | "dialog_presented" | "command_failed"
+  | "postcondition_failed" | "undo_unavailable";
+
+export interface LogicTrackIdentity {
+  id: string;
+  position: number;
+  type: LogicTrackType;
+  name: string;
+  selected: boolean;
+  observedAt: string;
+}
+
+export interface TrackOperationResult extends Omit<TransportStateResult, "data"> {
+  data: {
+    action: TrackOperationAction;
+    commandDispatched: boolean;
+    policyContext: boolean;
+    targetTrackId?: string;
+    undoAvailable: boolean;
+    tracks: LogicTrackIdentity[];
+    failure?: TrackOperationFailure;
+  };
+}
+
 export interface LogicBridge {
   doctor(request: {
     protocolVersion: typeof BRIDGE_PROTOCOL_VERSION;
@@ -211,6 +242,34 @@ export interface LogicBridge {
     operationId: string;
     timeoutMs: number;
   }): Promise<ProjectLifecycleResult>;
+  trackState(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION;
+    operationId: string;
+  }): Promise<TrackOperationResult>;
+  createTrack(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION; operationId: string;
+    type: Exclude<LogicTrackType, "unknown">; name?: string; timeoutMs: number;
+  }): Promise<TrackOperationResult>;
+  renameTrack(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION; operationId: string;
+    trackId: string; name: string; timeoutMs: number;
+  }): Promise<TrackOperationResult>;
+  selectTrack(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION; operationId: string;
+    trackId: string; timeoutMs: number;
+  }): Promise<TrackOperationResult>;
+  duplicateTrack(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION; operationId: string;
+    trackId: string; name?: string; timeoutMs: number;
+  }): Promise<TrackOperationResult>;
+  reorderTrack(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION; operationId: string;
+    trackId: string; position: number; timeoutMs: number;
+  }): Promise<TrackOperationResult>;
+  deleteTrack(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION; operationId: string;
+    trackId: string; confirm: boolean; timeoutMs: number;
+  }): Promise<TrackOperationResult>;
 }
 
 export interface LogicMcpServerDependencies {
@@ -377,6 +436,34 @@ const projectOutputSchema = z.object({
   cleanupPerformed: z.boolean(),
   failure: projectFailureSchema.optional(),
   evidence: z.array(evidenceSchema),
+});
+
+const trackIdentitySchema = z.object({
+  id: z.string().min(1),
+  position: z.number().int().positive(),
+  type: z.enum(["software_instrument", "audio", "external_midi", "unknown"]),
+  name: z.string().min(1),
+  selected: z.boolean(),
+  observedAt: z.iso.datetime(),
+});
+
+const trackOutputSchema = z.object({
+  operationId: z.string(),
+  status: z.enum(["succeeded", "partial", "failed", "cancelled", "timed_out"]),
+  reliability: z.enum(["verified_deterministic", "verified_ui_driven", "best_effort", "unsupported"]),
+  action: z.enum(["observe", "create", "rename", "select", "duplicate", "reorder", "delete"]),
+  commandDispatched: z.boolean(),
+  policyContext: z.boolean(),
+  targetTrackId: z.string().min(1).optional(),
+  undoAvailable: z.boolean(),
+  tracks: z.array(trackIdentitySchema),
+  failure: z.enum([
+    "project_policy_missing", "test_mode_inactive", "accessibility_unavailable",
+    "logic_not_running", "logic_not_focused", "track_not_found", "unsupported_track_type",
+    "invalid_name", "invalid_position", "confirmation_required", "dialog_presented",
+    "command_failed", "postcondition_failed", "undo_unavailable",
+  ]).optional(),
+  evidence: z.array(evidenceSchema).min(1),
 });
 
 export function createLogicMcpServer({
@@ -712,6 +799,132 @@ export function createLogicMcpServer({
     })),
   );
 
+  const trackResponse = (result: TrackOperationResult) => {
+    const structuredContent = {
+      operationId: result.operationId,
+      status: result.status,
+      reliability: result.reliability,
+      ...result.data,
+      evidence: result.evidence,
+    };
+    const detail = result.data.failure ? `: ${result.data.failure}` : "";
+    return {
+      content: [{
+        type: "text" as const,
+        text: `Logic tracks ${result.data.action} ${result.status}${detail}; observed ${result.data.tracks.length} track(s).`,
+      }],
+      structuredContent,
+    };
+  };
+  const trackIdInput = z.string().min(1);
+  const trackNameInput = z.string().trim().min(1).max(128);
+  const trackTimeoutInput = z.number().int().min(100).max(10_000).default(2_000);
+
+  server.registerTool(
+    "logic_list_tracks",
+    {
+      title: "Inspect Logic tracks",
+      description: "Observe ordered track IDs, names, supported types, and selection in the verified managed Test Project.",
+      inputSchema: z.object({}),
+      outputSchema: trackOutputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async () => trackResponse(await bridge.trackState({
+      protocolVersion: BRIDGE_PROTOCOL_VERSION,
+      operationId: createOperationId(),
+    })),
+  );
+
+  server.registerTool(
+    "logic_create_track",
+    {
+      title: "Create a Logic track",
+      description: "Create one Audio, Software Instrument, or External MIDI track in the managed Test Project and verify count, type, name, and selection. Requires active Exclusive Test Mode.",
+      inputSchema: z.object({
+        type: z.enum(["software_instrument", "audio", "external_midi"]),
+        name: trackNameInput.optional(),
+        timeoutMs: trackTimeoutInput,
+      }),
+      outputSchema: trackOutputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ type, name, timeoutMs }) => trackResponse(await bridge.createTrack({
+      protocolVersion: BRIDGE_PROTOCOL_VERSION, operationId: createOperationId(), type,
+      ...(name === undefined ? {} : { name }), timeoutMs,
+    })),
+  );
+
+  server.registerTool(
+    "logic_rename_track",
+    {
+      title: "Rename a Logic track",
+      description: "Rename an opaque track ID and verify that the same track identity has the requested name. Requires active Exclusive Test Mode.",
+      inputSchema: z.object({ trackId: trackIdInput, name: trackNameInput, timeoutMs: trackTimeoutInput }),
+      outputSchema: trackOutputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ trackId, name, timeoutMs }) => trackResponse(await bridge.renameTrack({
+      protocolVersion: BRIDGE_PROTOCOL_VERSION, operationId: createOperationId(), trackId, name, timeoutMs,
+    })),
+  );
+
+  server.registerTool(
+    "logic_select_track",
+    {
+      title: "Select a Logic track",
+      description: "Select an opaque track ID and verify its selected state. Requires active Exclusive Test Mode.",
+      inputSchema: z.object({ trackId: trackIdInput, timeoutMs: trackTimeoutInput }),
+      outputSchema: trackOutputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ trackId, timeoutMs }) => trackResponse(await bridge.selectTrack({
+      protocolVersion: BRIDGE_PROTOCOL_VERSION, operationId: createOperationId(), trackId, timeoutMs,
+    })),
+  );
+
+  server.registerTool(
+    "logic_duplicate_track",
+    {
+      title: "Duplicate a Logic track",
+      description: "Create an empty track with the selected track's settings and verify both identities and the duplicate's selection. Requires active Exclusive Test Mode.",
+      inputSchema: z.object({ trackId: trackIdInput, name: trackNameInput.optional(), timeoutMs: trackTimeoutInput }),
+      outputSchema: trackOutputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ trackId, name, timeoutMs }) => trackResponse(await bridge.duplicateTrack({
+      protocolVersion: BRIDGE_PROTOCOL_VERSION, operationId: createOperationId(), trackId,
+      ...(name === undefined ? {} : { name }), timeoutMs,
+    })),
+  );
+
+  server.registerTool(
+    "logic_reorder_track",
+    {
+      title: "Reorder a Logic track",
+      description: "Move an opaque track ID to a 1-based track position and verify identity and order. Requires active Exclusive Test Mode and Logic focus.",
+      inputSchema: z.object({ trackId: trackIdInput, position: z.number().int().positive(), timeoutMs: trackTimeoutInput }),
+      outputSchema: trackOutputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ trackId, position, timeoutMs }) => trackResponse(await bridge.reorderTrack({
+      protocolVersion: BRIDGE_PROTOCOL_VERSION, operationId: createOperationId(), trackId, position, timeoutMs,
+    })),
+  );
+
+  server.registerTool(
+    "logic_delete_track",
+    {
+      title: "Delete a Logic track",
+      description: "Delete one opaque track ID only in the managed Test Project, then verify its removal and that Logic offers Undo Delete Track. Requires active Exclusive Test Mode and explicit confirmation.",
+      inputSchema: z.object({ trackId: trackIdInput, confirm: z.literal(true), timeoutMs: trackTimeoutInput }),
+      outputSchema: trackOutputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ trackId, timeoutMs }) => trackResponse(await bridge.deleteTrack({
+      protocolVersion: BRIDGE_PROTOCOL_VERSION, operationId: createOperationId(), trackId, confirm: true, timeoutMs,
+    })),
+  );
+
   server.registerResource(
     "logic_transport_state",
     "logic://transport/state",
@@ -767,6 +980,33 @@ export function createLogicMcpServer({
           }),
         }],
       };
+    },
+  );
+
+  server.registerResource(
+    "logic_tracks_state",
+    "logic://tracks/state",
+    {
+      title: "Logic tracks state",
+      description: "Observed ordered track identities, names, types, and selection in the managed Test Project.",
+      mimeType: "application/json",
+    },
+    async (uri) => {
+      const result = await bridge.trackState({
+        protocolVersion: BRIDGE_PROTOCOL_VERSION,
+        operationId: createOperationId(),
+      });
+      return { contents: [{
+        uri: uri.href,
+        mimeType: "application/json",
+        text: JSON.stringify({
+          operationId: result.operationId,
+          status: result.status,
+          reliability: result.reliability,
+          state: result.data,
+          evidence: result.evidence,
+        }),
+      }] };
     },
   );
 

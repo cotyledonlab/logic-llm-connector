@@ -7,6 +7,7 @@ public enum BridgeRouterError: Error, Equatable {
     case diagnosticsDisabled
     case transportUnavailable
     case projectLifecycleUnavailable
+    case trackOperationsUnavailable
 }
 
 public enum JSONRPCID: Codable, Sendable, Equatable {
@@ -187,6 +188,35 @@ private struct ProjectMutationRequest: Codable {
     let params: ProjectMutationParameters
 }
 
+private struct TrackMutationParameters: Codable {
+    let protocolVersion: String
+    let operationID: String
+    let trackID: String?
+    let type: LogicTrackType?
+    let name: String?
+    let position: Int?
+    let confirm: Bool?
+    let timeoutMs: Int
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion
+        case operationID = "operationId"
+        case trackID = "trackId"
+        case type
+        case name
+        case position
+        case confirm
+        case timeoutMs
+    }
+}
+
+private struct TrackMutationRequest: Codable {
+    let jsonrpc: String
+    let id: JSONRPCID
+    let method: String
+    let params: TrackMutationParameters
+}
+
 private struct JSONRPCResponse<Result: Codable>: Codable {
     let jsonrpc: String
     let id: JSONRPCID
@@ -199,6 +229,7 @@ public struct BridgeRouter: Sendable {
     private let diagnosticsEnabled: Bool
     private let transport: (any TransportControlling)?
     private let projectLifecycle: (any ProjectLifecycleControlling)?
+    private let trackOperations: (any TrackOperationsControlling)?
     private let now: @Sendable () -> Date
 
     public init(
@@ -207,6 +238,7 @@ public struct BridgeRouter: Sendable {
         diagnosticsEnabled: Bool = false,
         transport: (any TransportControlling)? = nil,
         projectLifecycle: (any ProjectLifecycleControlling)? = nil,
+        trackOperations: (any TrackOperationsControlling)? = nil,
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.doctor = doctor
@@ -214,6 +246,7 @@ public struct BridgeRouter: Sendable {
         self.diagnosticsEnabled = diagnosticsEnabled
         self.transport = transport
         self.projectLifecycle = projectLifecycle
+        self.trackOperations = trackOperations
         self.now = now
     }
 
@@ -242,9 +275,81 @@ public struct BridgeRouter: Sendable {
             return try routeProjectOpen(data)
         case "logic.project.save", "logic.project.close", "logic.project.reopen", "logic.project.cleanup":
             return try routeProjectMutation(data, method: envelope.method)
+        case "logic.tracks.state":
+            return try routeTrackState(data)
+        case "logic.tracks.create", "logic.tracks.rename", "logic.tracks.select", "logic.tracks.duplicate", "logic.tracks.reorder", "logic.tracks.delete":
+            return try routeTrackMutation(data, method: envelope.method)
         default:
             throw BridgeRouterError.unsupportedMethod(envelope.method)
         }
+    }
+
+    private func routeTrackState(_ data: Data) throws -> Data {
+        guard let trackOperations else { throw BridgeRouterError.trackOperationsUnavailable }
+        let request = try JSONDecoder().decode(TransportStateRequest.self, from: data)
+        try validateProtocolVersion(request.params.protocolVersion)
+        return try JSONEncoder.bridge.encode(JSONRPCResponse(
+            jsonrpc: "2.0",
+            id: request.id,
+            result: trackOperations.observe(operationID: request.params.operationID)
+        ))
+    }
+
+    private func routeTrackMutation(_ data: Data, method: String) throws -> Data {
+        guard let trackOperations else { throw BridgeRouterError.trackOperationsUnavailable }
+        let request = try JSONDecoder().decode(TrackMutationRequest.self, from: data)
+        try validateProtocolVersion(request.params.protocolVersion)
+        let params = request.params
+        let result: TrackOperationResult
+        switch method {
+        case "logic.tracks.create":
+            result = trackOperations.create(
+                type: try required(params.type),
+                name: params.name,
+                operationID: params.operationID,
+                timeoutMilliseconds: params.timeoutMs
+            )
+        case "logic.tracks.rename":
+            result = trackOperations.rename(
+                trackID: try required(params.trackID),
+                name: try required(params.name),
+                operationID: params.operationID,
+                timeoutMilliseconds: params.timeoutMs
+            )
+        case "logic.tracks.select":
+            result = trackOperations.select(
+                trackID: try required(params.trackID),
+                operationID: params.operationID,
+                timeoutMilliseconds: params.timeoutMs
+            )
+        case "logic.tracks.duplicate":
+            result = trackOperations.duplicate(
+                trackID: try required(params.trackID),
+                name: params.name,
+                operationID: params.operationID,
+                timeoutMilliseconds: params.timeoutMs
+            )
+        case "logic.tracks.reorder":
+            result = trackOperations.reorder(
+                trackID: try required(params.trackID),
+                position: try required(params.position),
+                operationID: params.operationID,
+                timeoutMilliseconds: params.timeoutMs
+            )
+        default:
+            result = trackOperations.delete(
+                trackID: try required(params.trackID),
+                confirmed: params.confirm == true,
+                operationID: params.operationID,
+                timeoutMilliseconds: params.timeoutMs
+            )
+        }
+        return try JSONEncoder.bridge.encode(JSONRPCResponse(jsonrpc: "2.0", id: request.id, result: result))
+    }
+
+    private func required<Value>(_ value: Value?) throws -> Value {
+        guard let value else { throw DecodingError.valueNotFound(Value.self, .init(codingPath: [], debugDescription: "Missing required track parameter")) }
+        return value
     }
 
     private func routeProjectState(_ data: Data) throws -> Data {

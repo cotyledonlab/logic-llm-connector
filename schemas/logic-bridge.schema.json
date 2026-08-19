@@ -227,6 +227,41 @@
       },
       "additionalProperties": false
     },
+    "trackIdentity": {
+      "type": "object",
+      "required": ["id", "position", "type", "name", "selected", "observedAt"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "position": { "type": "integer", "minimum": 1 },
+        "type": { "enum": ["software_instrument", "audio", "external_midi", "unknown"] },
+        "name": { "type": "string", "minLength": 1 },
+        "selected": { "type": "boolean" },
+        "observedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "trackOperationData": {
+      "type": "object",
+      "required": ["action", "commandDispatched", "policyContext", "undoAvailable", "tracks"],
+      "properties": {
+        "action": { "enum": ["observe", "create", "rename", "select", "duplicate", "reorder", "delete"] },
+        "commandDispatched": { "type": "boolean" },
+        "policyContext": { "type": "boolean" },
+        "targetTrackId": { "type": "string", "minLength": 1 },
+        "undoAvailable": { "type": "boolean" },
+        "tracks": { "type": "array", "items": { "$ref": "#/$defs/trackIdentity" } },
+        "failure": {
+          "enum": [
+            "project_policy_missing", "test_mode_inactive", "accessibility_unavailable",
+            "logic_not_running", "logic_not_focused", "track_not_found",
+            "unsupported_track_type", "invalid_name", "invalid_position",
+            "confirmation_required", "dialog_presented", "command_failed",
+            "postcondition_failed", "undo_unavailable"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "operationResult": {
       "type": "object",
       "required": [
@@ -263,7 +298,8 @@
             { "$ref": "#/$defs/transportOperationData" },
             { "$ref": "#/$defs/transportLocationOperationData" },
             { "$ref": "#/$defs/transportLocateOperationData" },
-            { "$ref": "#/$defs/projectLifecycleData" }
+            { "$ref": "#/$defs/projectLifecycleData" },
+            { "$ref": "#/$defs/trackOperationData" }
           ]
         },
         "evidence": {
@@ -475,6 +511,55 @@
       },
       "additionalProperties": false
     },
+    "trackStateRequest": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/jsonRpcId" },
+        "method": { "const": "logic.tracks.state" },
+        "params": {
+          "type": "object",
+          "required": ["protocolVersion", "operationId"],
+          "properties": {
+            "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+            "operationId": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "trackMutationRequest": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/jsonRpcId" },
+        "method": {
+          "enum": [
+            "logic.tracks.create", "logic.tracks.rename", "logic.tracks.select",
+            "logic.tracks.duplicate", "logic.tracks.reorder", "logic.tracks.delete"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "required": ["protocolVersion", "operationId", "timeoutMs"],
+          "properties": {
+            "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+            "operationId": { "type": "string", "minLength": 1 },
+            "trackId": { "type": "string", "minLength": 1 },
+            "type": { "enum": ["software_instrument", "audio", "external_midi"] },
+            "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "position": { "type": "integer", "minimum": 1 },
+            "confirm": { "type": "boolean" },
+            "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 10000 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "request": {
       "oneOf": [
         { "$ref": "#/$defs/doctorRequest" },
@@ -485,7 +570,9 @@
         { "$ref": "#/$defs/transportLocateRequest" },
         { "$ref": "#/$defs/projectStateRequest" },
         { "$ref": "#/$defs/projectOpenRequest" },
-        { "$ref": "#/$defs/projectMutationRequest" }
+        { "$ref": "#/$defs/projectMutationRequest" },
+        { "$ref": "#/$defs/trackStateRequest" },
+        { "$ref": "#/$defs/trackMutationRequest" }
       ]
     },
     "response": {

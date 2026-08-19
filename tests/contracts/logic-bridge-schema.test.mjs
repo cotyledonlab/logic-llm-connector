@@ -374,3 +374,57 @@ test("test project lifecycle requests and identity-bearing results are versioned
   response.result.data.project.path = "";
   assert.equal(validateResponse(response), false);
 });
+
+test("track requests and identity-bearing results are bounded and versioned", async () => {
+  const validateRequest = await validatorFor("request");
+  const validateResponse = await validatorFor("response");
+  const baseParams = { protocolVersion: "1.0.0", operationId: "track-1", timeoutMs: 2000 };
+  const requests = [
+    { jsonrpc: "2.0", id: "track-1", method: "logic.tracks.state", params: { protocolVersion: "1.0.0", operationId: "track-1" } },
+    { jsonrpc: "2.0", id: "track-1", method: "logic.tracks.create", params: { ...baseParams, type: "audio", name: "Voice" } },
+    { jsonrpc: "2.0", id: "track-1", method: "logic.tracks.rename", params: { ...baseParams, trackId: "track-a", name: "Lead" } },
+    { jsonrpc: "2.0", id: "track-1", method: "logic.tracks.select", params: { ...baseParams, trackId: "track-a" } },
+    { jsonrpc: "2.0", id: "track-1", method: "logic.tracks.duplicate", params: { ...baseParams, trackId: "track-a" } },
+    { jsonrpc: "2.0", id: "track-1", method: "logic.tracks.reorder", params: { ...baseParams, trackId: "track-a", position: 1 } },
+    { jsonrpc: "2.0", id: "track-1", method: "logic.tracks.delete", params: { ...baseParams, trackId: "track-a", confirm: true } },
+  ];
+  for (const request of requests) {
+    assert.equal(validateRequest(request), true, JSON.stringify(validateRequest.errors));
+  }
+
+  const response = {
+    jsonrpc: "2.0",
+    id: "track-1",
+    result: {
+      protocolVersion: "1.0.0",
+      operationId: "track-1",
+      status: "succeeded",
+      reliability: "verified_ui_driven",
+      startedAt: "2026-08-19T10:00:00Z",
+      finishedAt: "2026-08-19T10:00:01Z",
+      data: {
+        action: "create",
+        commandDispatched: true,
+        policyContext: true,
+        targetTrackId: "track-a",
+        undoAvailable: false,
+        tracks: [{
+          id: "track-a",
+          position: 1,
+          type: "audio",
+          name: "Voice",
+          selected: true,
+          observedAt: "2026-08-19T10:00:01Z"
+        }]
+      },
+      evidence: [{
+        source: "Logic track header and inspector accessibility observation",
+        observedAt: "2026-08-19T10:00:01Z",
+        value: { trackCount: 1 }
+      }]
+    }
+  };
+  assert.equal(validateResponse(response), true, JSON.stringify(validateResponse.errors));
+  response.result.data.tracks[0].position = 0;
+  assert.equal(validateResponse(response), false);
+});

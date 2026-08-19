@@ -26,7 +26,7 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
     private let systemObserver = MacSystemObserver()
     private let mackieObserver = MacMackieControlObserver()
     private let projectLifecycle: TestProjectLifecycleController
-    private let testModeController = ExclusiveTestModeController()
+    private let testModeController: ExclusiveTestModeController
     private lazy var safetyMonitor = AutomationSafetyMonitor(
         controller: testModeController,
         observer: MacAutomationSafetyObserver(),
@@ -54,12 +54,14 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
         socketPath: String,
         router: BridgeRouter,
         midiOwner: VirtualMIDIEndpointOwner,
-        projectLifecycle: TestProjectLifecycleController
+        projectLifecycle: TestProjectLifecycleController,
+        testModeController: ExclusiveTestModeController
     ) {
         self.socketPath = socketPath
         self.router = router
         self.midiOwner = midiOwner
         self.projectLifecycle = projectLifecycle
+        self.testModeController = testModeController
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -299,6 +301,11 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
 private let diagnosticsEnabled = ProcessInfo.processInfo.environment["LOGIC_ENABLE_DIAGNOSTICS"] == "1"
 private let mackieFeedback = MackieControlFeedbackMonitor()
 private let projectLifecycle = TestProjectLifecycleController()
+private let testModeController = ExclusiveTestModeController()
+private let trackOperations = TrackOperationsController(
+    policyContextReady: { projectLifecycle.hasVerifiedPolicyContext },
+    testModeReady: { testModeController.canBeginUIOperation }
+)
 private let midiOwner: VirtualMIDIEndpointOwner = {
     do {
         return try VirtualMIDIEndpointOwner(onReceive: { messages in
@@ -320,14 +327,16 @@ private let router = BridgeRouter(
     ),
     diagnosticsEnabled: diagnosticsEnabled,
     transport: MackieTransportController(midi: midiOwner, feedback: mackieFeedback),
-    projectLifecycle: projectLifecycle
+    projectLifecycle: projectLifecycle,
+    trackOperations: trackOperations
 )
 private let application = NSApplication.shared
 private let delegate = CompanionApplicationDelegate(
     socketPath: resolveSocketPath(),
     router: router,
     midiOwner: midiOwner,
-    projectLifecycle: projectLifecycle
+    projectLifecycle: projectLifecycle,
+    testModeController: testModeController
 )
 application.delegate = delegate
 application.run()

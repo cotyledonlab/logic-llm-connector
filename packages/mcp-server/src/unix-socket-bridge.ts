@@ -9,6 +9,8 @@ import type {
   TransportLocateOperationResult,
   TransportStateResult,
   ProjectLifecycleResult,
+  TrackOperationResult,
+  LogicTrackType,
 } from "./server.js";
 
 export interface UnixSocketLogicBridgeOptions {
@@ -122,6 +124,47 @@ export class UnixSocketLogicBridge implements LogicBridge {
     timeoutMs: number;
   }): Promise<ProjectLifecycleResult> {
     return this.#request("logic.project.cleanup", request);
+  }
+
+  trackState(request: { protocolVersion: "1.0.0"; operationId: string }): Promise<TrackOperationResult> {
+    return this.#request("logic.tracks.state", request);
+  }
+
+  createTrack(request: {
+    protocolVersion: "1.0.0"; operationId: string;
+    type: Exclude<LogicTrackType, "unknown">; name?: string; timeoutMs: number;
+  }): Promise<TrackOperationResult> {
+    return this.#request("logic.tracks.create", request);
+  }
+
+  renameTrack(request: {
+    protocolVersion: "1.0.0"; operationId: string; trackId: string; name: string; timeoutMs: number;
+  }): Promise<TrackOperationResult> {
+    return this.#request("logic.tracks.rename", request);
+  }
+
+  selectTrack(request: {
+    protocolVersion: "1.0.0"; operationId: string; trackId: string; timeoutMs: number;
+  }): Promise<TrackOperationResult> {
+    return this.#request("logic.tracks.select", request);
+  }
+
+  duplicateTrack(request: {
+    protocolVersion: "1.0.0"; operationId: string; trackId: string; name?: string; timeoutMs: number;
+  }): Promise<TrackOperationResult> {
+    return this.#request("logic.tracks.duplicate", request);
+  }
+
+  reorderTrack(request: {
+    protocolVersion: "1.0.0"; operationId: string; trackId: string; position: number; timeoutMs: number;
+  }): Promise<TrackOperationResult> {
+    return this.#request("logic.tracks.reorder", request);
+  }
+
+  deleteTrack(request: {
+    protocolVersion: "1.0.0"; operationId: string; trackId: string; confirm: boolean; timeoutMs: number;
+  }): Promise<TrackOperationResult> {
+    return this.#request("logic.tracks.delete", request);
   }
 
   #request<Result>(method: string, params: object): Promise<Result> {

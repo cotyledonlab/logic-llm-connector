@@ -212,6 +212,40 @@ private struct FixedProjectLifecycleController: ProjectLifecycleControlling {
     }
 }
 
+private struct FixedTrackOperationsController: TrackOperationsControlling {
+    func observe(operationID: String) -> TrackOperationResult { make(.observe, operationID) }
+    func create(type: LogicTrackType, name: String?, operationID: String, timeoutMilliseconds: Int) -> TrackOperationResult { make(.create, operationID) }
+    func rename(trackID: String, name: String, operationID: String, timeoutMilliseconds: Int) -> TrackOperationResult { make(.rename, operationID, target: trackID) }
+    func select(trackID: String, operationID: String, timeoutMilliseconds: Int) -> TrackOperationResult { make(.select, operationID, target: trackID) }
+    func duplicate(trackID: String, name: String?, operationID: String, timeoutMilliseconds: Int) -> TrackOperationResult { make(.duplicate, operationID, target: "track-b") }
+    func reorder(trackID: String, position: Int, operationID: String, timeoutMilliseconds: Int) -> TrackOperationResult { make(.reorder, operationID, target: trackID) }
+    func delete(trackID: String, confirmed: Bool, operationID: String, timeoutMilliseconds: Int) -> TrackOperationResult { make(.delete, operationID, target: trackID, undo: true) }
+
+    private func make(_ action: TrackOperationAction, _ operationID: String, target: String? = nil, undo: Bool = false) -> TrackOperationResult {
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+        return TrackOperationResult(
+            protocolVersion: bridgeProtocolVersion,
+            operationID: operationID,
+            status: .succeeded,
+            reliability: .verifiedUIDriven,
+            startedAt: timestamp,
+            finishedAt: timestamp,
+            data: TrackOperationData(
+                action: action,
+                commandDispatched: action != .observe,
+                policyContext: true,
+                targetTrackID: target,
+                undoAvailable: undo,
+                tracks: [LogicTrackIdentity(
+                    id: "track-a", position: 1, type: .audio, name: "Voice",
+                    selected: true, observedAt: timestamp
+                )]
+            ),
+            evidence: [Evidence(source: "AX track headers", observedAt: timestamp, value: .number(1))]
+        )
+    }
+}
+
 @Test("bridge routes a versioned JSON-RPC doctor request")
 func bridgeRoutesDoctorRequest() throws {
     let request = """
@@ -367,5 +401,29 @@ func bridgeRoutesProjectLifecycleRequests() throws {
         let data = try #require(result["data"] as? [String: Any])
         #expect(data["action"] as? String == action)
         #expect(result["status"] as? String == "succeeded")
+    }
+}
+
+@Test("bridge routes track inspection and mutation requests")
+func bridgeRoutesTrackRequests() throws {
+    let router = BridgeRouter(
+        doctor: Doctor(system: RouterSystem()),
+        trackOperations: FixedTrackOperationsController()
+    )
+    let requests = [
+        #"{"jsonrpc":"2.0","id":"state","method":"logic.tracks.state","params":{"protocolVersion":"1.0.0","operationId":"state"}}"#,
+        #"{"jsonrpc":"2.0","id":"create","method":"logic.tracks.create","params":{"protocolVersion":"1.0.0","operationId":"create","type":"audio","name":"Voice","timeoutMs":1000}}"#,
+        #"{"jsonrpc":"2.0","id":"rename","method":"logic.tracks.rename","params":{"protocolVersion":"1.0.0","operationId":"rename","trackId":"track-a","name":"Lead","timeoutMs":1000}}"#,
+        #"{"jsonrpc":"2.0","id":"select","method":"logic.tracks.select","params":{"protocolVersion":"1.0.0","operationId":"select","trackId":"track-a","timeoutMs":1000}}"#,
+        #"{"jsonrpc":"2.0","id":"duplicate","method":"logic.tracks.duplicate","params":{"protocolVersion":"1.0.0","operationId":"duplicate","trackId":"track-a","timeoutMs":1000}}"#,
+        #"{"jsonrpc":"2.0","id":"reorder","method":"logic.tracks.reorder","params":{"protocolVersion":"1.0.0","operationId":"reorder","trackId":"track-a","position":1,"timeoutMs":1000}}"#,
+        #"{"jsonrpc":"2.0","id":"delete","method":"logic.tracks.delete","params":{"protocolVersion":"1.0.0","operationId":"delete","trackId":"track-a","confirm":true,"timeoutMs":1000}}"#,
+    ]
+    let expected = ["observe", "create", "rename", "select", "duplicate", "reorder", "delete"]
+    for (request, action) in zip(requests, expected) {
+        let response = try #require(JSONSerialization.jsonObject(with: router.handle(Data(request.utf8))) as? [String: Any])
+        let result = try #require(response["result"] as? [String: Any])
+        let data = try #require(result["data"] as? [String: Any])
+        #expect(data["action"] as? String == action)
     }
 }

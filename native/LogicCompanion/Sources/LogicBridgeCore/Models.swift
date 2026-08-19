@@ -341,6 +341,125 @@ public struct TransportLocateOperationResult: Codable, Sendable, Equatable {
     }
 }
 
+public enum LogicTrackType: String, Codable, Sendable {
+    case softwareInstrument = "software_instrument"
+    case audio
+    case externalMIDI = "external_midi"
+    case unknown
+}
+
+public enum TrackOperationAction: String, Codable, Sendable {
+    case observe
+    case create
+    case rename
+    case select
+    case duplicate
+    case reorder
+    case delete
+}
+
+public enum TrackOperationFailure: String, Codable, Sendable, Error {
+    case projectPolicyMissing = "project_policy_missing"
+    case testModeInactive = "test_mode_inactive"
+    case accessibilityUnavailable = "accessibility_unavailable"
+    case logicNotRunning = "logic_not_running"
+    case logicNotFocused = "logic_not_focused"
+    case trackNotFound = "track_not_found"
+    case unsupportedTrackType = "unsupported_track_type"
+    case invalidName = "invalid_name"
+    case invalidPosition = "invalid_position"
+    case confirmationRequired = "confirmation_required"
+    case dialogPresented = "dialog_presented"
+    case commandFailed = "command_failed"
+    case postconditionFailed = "postcondition_failed"
+    case undoUnavailable = "undo_unavailable"
+}
+
+public struct LogicTrackIdentity: Codable, Sendable, Equatable {
+    public let id: String
+    public let position: Int
+    public let type: LogicTrackType
+    public let name: String
+    public let selected: Bool
+    public let observedAt: Date
+
+    public init(
+        id: String,
+        position: Int,
+        type: LogicTrackType,
+        name: String,
+        selected: Bool,
+        observedAt: Date
+    ) {
+        self.id = id
+        self.position = position
+        self.type = type
+        self.name = name
+        self.selected = selected
+        self.observedAt = observedAt
+    }
+}
+
+public struct TrackOperationData: Codable, Sendable, Equatable {
+    public let action: TrackOperationAction
+    public let commandDispatched: Bool
+    public let policyContext: Bool
+    public let targetTrackID: String?
+    public let undoAvailable: Bool
+    public let tracks: [LogicTrackIdentity]
+    public let failure: TrackOperationFailure?
+
+    public init(
+        action: TrackOperationAction,
+        commandDispatched: Bool,
+        policyContext: Bool,
+        targetTrackID: String? = nil,
+        undoAvailable: Bool = false,
+        tracks: [LogicTrackIdentity],
+        failure: TrackOperationFailure? = nil
+    ) {
+        self.action = action
+        self.commandDispatched = commandDispatched
+        self.policyContext = policyContext
+        self.targetTrackID = targetTrackID
+        self.undoAvailable = undoAvailable
+        self.tracks = tracks
+        self.failure = failure
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case action
+        case commandDispatched
+        case policyContext
+        case targetTrackID = "targetTrackId"
+        case undoAvailable
+        case tracks
+        case failure
+    }
+}
+
+public struct TrackOperationResult: Codable, Sendable, Equatable {
+    public let protocolVersion: String
+    public let operationID: String
+    public let status: OperationStatus
+    public let reliability: Reliability
+    public let startedAt: Date
+    public let finishedAt: Date
+    public let data: TrackOperationData
+    public let evidence: [Evidence]
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion
+        case operationID = "operationId"
+        case status
+        case reliability
+        case startedAt
+        case finishedAt
+        case data
+        case evidence
+    }
+}
+
 public extension JSONEncoder {
     static var bridge: JSONEncoder {
         let encoder = JSONEncoder()

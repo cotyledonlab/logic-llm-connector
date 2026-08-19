@@ -26,10 +26,25 @@ const unusedProjectBridge = {
   | "cleanupTestProject"
 >;
 
+const unusedTrackBridge = {
+  async trackState() { throw new Error("track operations are not used in this test"); },
+  async createTrack() { throw new Error("track operations are not used in this test"); },
+  async renameTrack() { throw new Error("track operations are not used in this test"); },
+  async selectTrack() { throw new Error("track operations are not used in this test"); },
+  async duplicateTrack() { throw new Error("track operations are not used in this test"); },
+  async reorderTrack() { throw new Error("track operations are not used in this test"); },
+  async deleteTrack() { throw new Error("track operations are not used in this test"); },
+} satisfies Pick<
+  LogicBridge,
+  | "trackState" | "createTrack" | "renameTrack" | "selectTrack"
+  | "duplicateTrack" | "reorderTrack" | "deleteTrack"
+>;
+
 test("an MCP client can diagnose Logic readiness", async (t) => {
   const calls: unknown[] = [];
   const bridge: LogicBridge = {
     ...unusedProjectBridge,
+    ...unusedTrackBridge,
     async doctor(request) {
       calls.push(request);
       const timestamp = "2026-08-18T10:00:00.000Z";
@@ -105,6 +120,13 @@ test("an MCP client can diagnose Logic readiness", async (t) => {
     "logic_close_test_project",
     "logic_reopen_test_project",
     "logic_cleanup_test_project",
+    "logic_list_tracks",
+    "logic_create_track",
+    "logic_rename_track",
+    "logic_select_track",
+    "logic_duplicate_track",
+    "logic_reorder_track",
+    "logic_delete_track",
   ]);
 
   const result = await client.callTool({ name: "logic_doctor", arguments: {} });
@@ -135,6 +157,7 @@ test("UI inspection is absent by default and available only when enabled", async
   const calls: unknown[] = [];
   const bridge: LogicBridge = {
     ...unusedProjectBridge,
+    ...unusedTrackBridge,
     async doctor() {
       throw new Error("doctor is not used in this test");
     },
@@ -208,6 +231,13 @@ test("UI inspection is absent by default and available only when enabled", async
     "logic_close_test_project",
     "logic_reopen_test_project",
     "logic_cleanup_test_project",
+    "logic_list_tracks",
+    "logic_create_track",
+    "logic_rename_track",
+    "logic_select_track",
+    "logic_duplicate_track",
+    "logic_reorder_track",
+    "logic_delete_track",
   ]);
   await disabledClient.close();
   await disabledServer.close();
@@ -237,6 +267,13 @@ test("UI inspection is absent by default and available only when enabled", async
     "logic_close_test_project",
     "logic_reopen_test_project",
     "logic_cleanup_test_project",
+    "logic_list_tracks",
+    "logic_create_track",
+    "logic_rename_track",
+    "logic_select_track",
+    "logic_duplicate_track",
+    "logic_reorder_track",
+    "logic_delete_track",
     "logic_inspect_ui",
   ]);
   const result = await client.callTool({
@@ -280,6 +317,7 @@ test("transport tools and resource preserve verified native outcomes", async (t)
   };
   const bridge: LogicBridge = {
     ...unusedProjectBridge,
+    ...unusedTrackBridge,
     async doctor() { throw new Error("unused"); },
     async inspectUI() { throw new Error("unused"); },
     async transportState(request) {
@@ -485,6 +523,7 @@ test("project tools preserve copied-project identity, confirmation, and cleanup 
     }],
   });
   const bridge: LogicBridge = {
+    ...unusedTrackBridge,
     async doctor() { throw new Error("unused"); },
     async inspectUI() { throw new Error("unused"); },
     async transportState() { throw new Error("unused"); },
@@ -561,4 +600,78 @@ test("project tools preserve copied-project identity, confirmation, and cleanup 
   assert.deepEqual(calls.map(({ method }) => method), [
     "open", "save", "close", "reopen", "cleanup", "state",
   ]);
+});
+
+test("track tools preserve opaque identity, safety confirmation, and observed state", async (t) => {
+  const calls: Array<{ method: string; request: unknown }> = [];
+  const timestamp = "2026-08-19T10:00:00.000Z";
+  const makeResult = (operationId: string, action: "observe" | "create" | "delete") => ({
+    protocolVersion: "1.0.0" as const,
+    operationId,
+    status: "succeeded" as const,
+    reliability: "verified_ui_driven" as const,
+    startedAt: timestamp,
+    finishedAt: timestamp,
+    data: {
+      action,
+      commandDispatched: action !== "observe",
+      policyContext: true,
+      ...(action === "observe" ? {} : { targetTrackId: "track-a" }),
+      undoAvailable: action === "delete",
+      tracks: action === "delete" ? [] : [{
+        id: "track-a", position: 1, type: "audio" as const, name: "Voice",
+        selected: true, observedAt: timestamp,
+      }],
+    },
+    evidence: [{ source: "AX track headers", observedAt: timestamp, value: { trackCount: action === "delete" ? 0 : 1 } }],
+  });
+  const unused = async () => { throw new Error("unused"); };
+  const bridge: LogicBridge = {
+    ...unusedProjectBridge,
+    doctor: unused,
+    inspectUI: unused,
+    transportState: unused,
+    setTransportPlaying: unused,
+    moveTransportPlayhead: unused,
+    locateTransport: unused,
+    async trackState(request) { calls.push({ method: "state", request }); return makeResult(request.operationId, "observe"); },
+    async createTrack(request) { calls.push({ method: "create", request }); return makeResult(request.operationId, "create"); },
+    renameTrack: unused,
+    selectTrack: unused,
+    duplicateTrack: unused,
+    reorderTrack: unused,
+    async deleteTrack(request) { calls.push({ method: "delete", request }); return makeResult(request.operationId, "delete"); },
+  };
+  let operation = 0;
+  const server = createLogicMcpServer({ bridge, createOperationId: () => `track-${++operation}` });
+  const client = new Client({ name: "track-client", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  t.after(async () => { await client.close(); await server.close(); });
+
+  const created = await client.callTool({
+    name: "logic_create_track",
+    arguments: { type: "audio", name: "Voice", timeoutMs: 1000 },
+  });
+  assert.equal(created.isError, undefined);
+  assert.equal((created.structuredContent as Record<string, unknown>)["targetTrackId"], "track-a");
+
+  const deniedDelete = await client.callTool({
+    name: "logic_delete_track",
+    arguments: { trackId: "track-a", timeoutMs: 1000 },
+  });
+  assert.equal(deniedDelete.isError, true);
+
+  const deleted = await client.callTool({
+    name: "logic_delete_track",
+    arguments: { trackId: "track-a", confirm: true, timeoutMs: 1000 },
+  });
+  assert.equal((deleted.structuredContent as Record<string, unknown>)["undoAvailable"], true);
+
+  const resource = await client.readResource({ uri: "logic://tracks/state" });
+  const content = resource.contents[0];
+  assert.ok(content && "text" in content);
+  assert.equal(JSON.parse(content.text).state.tracks[0].id, "track-a");
+  assert.deepEqual(calls.map(({ method }) => method), ["create", "delete", "state"]);
 });
