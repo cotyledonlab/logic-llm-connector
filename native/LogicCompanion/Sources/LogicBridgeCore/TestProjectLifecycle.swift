@@ -228,6 +228,7 @@ public final class TestProjectLifecycleController: ProjectLifecycleControlling, 
         let destination = workspace.appendingPathComponent(source.lastPathComponent, isDirectory: isDirectory.boolValue)
         do {
             try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: rootURL.path)
             try fileManager.createDirectory(at: workspace, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
             try fileManager.copyItem(at: source, to: destination)
         } catch {
@@ -555,12 +556,14 @@ public struct MacLogicProjectScripting: LogicProjectScripting {
 
     public func observe() throws -> LogicProjectIdentity? {
         let output = try execute("""
+        with timeout of 5 seconds
         tell application id "com.apple.logic10"
             if (count documents) is 0 then return ""
             set d to front document
             set fieldSeparator to ASCII character 31
             return (name of d as text) & fieldSeparator & (path of d as text) & fieldSeparator & (modified of d as text)
         end tell
+        end timeout
         """)
         guard !output.isEmpty else { return nil }
         let fields = output.split(separator: Self.separator, omittingEmptySubsequences: false)
@@ -575,18 +578,20 @@ public struct MacLogicProjectScripting: LogicProjectScripting {
 
     public func open(projectAt url: URL) throws {
         _ = try execute("""
+        with timeout of 30 seconds
         tell application id "com.apple.logic10"
             open (POSIX file "\(escape(url.path))")
         end tell
+        end timeout
         """)
     }
 
     public func save() throws {
-        _ = try execute("tell application id \"com.apple.logic10\" to save front document")
+        _ = try execute("with timeout of 30 seconds\ntell application id \"com.apple.logic10\" to save front document\nend timeout")
     }
 
     public func closeWithoutSaving() throws {
-        _ = try execute("tell application id \"com.apple.logic10\" to close front document saving no")
+        _ = try execute("with timeout of 30 seconds\ntell application id \"com.apple.logic10\" to close front document saving no\nend timeout")
     }
 
     private func execute(_ source: String) throws -> String {
@@ -598,7 +603,7 @@ public struct MacLogicProjectScripting: LogicProjectScripting {
         if let details {
             let number = details[NSAppleScript.errorNumber] as? Int
             if number == -1743 { throw LogicProjectScriptingError.automationDenied }
-            if number == -1712 || number == -1708 { throw LogicProjectScriptingError.dialogPresented }
+            if logicHasModalWindow() { throw LogicProjectScriptingError.dialogPresented }
             throw LogicProjectScriptingError.commandFailed
         }
         return result.stringValue ?? ""
@@ -607,5 +612,27 @@ public struct MacLogicProjectScripting: LogicProjectScripting {
     private func escape(_ value: String) -> String {
         value.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
+    private func logicHasModalWindow() -> Bool {
+        guard AXIsProcessTrusted(),
+              let logic = NSWorkspace.shared.runningApplications.first(where: {
+                  $0.bundleIdentifier == "com.apple.logic10"
+              }) else { return false }
+        let application = AXUIElementCreateApplication(logic.processIdentifier)
+        var windowValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            application,
+            kAXFocusedWindowAttribute as CFString,
+            &windowValue
+        ) == .success,
+        let windowValue else { return false }
+        var modalValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            windowValue as! AXUIElement,
+            kAXModalAttribute as CFString,
+            &modalValue
+        ) == .success else { return false }
+        return (modalValue as? NSNumber)?.boolValue == true
     }
 }

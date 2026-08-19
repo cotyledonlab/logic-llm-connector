@@ -20,7 +20,7 @@ export class UnixSocketLogicBridge implements LogicBridge {
   readonly #socketPath: string;
   readonly #timeoutMs: number;
 
-  constructor({ socketPath, timeoutMs = 5_000 }: UnixSocketLogicBridgeOptions) {
+  constructor({ socketPath, timeoutMs = 35_000 }: UnixSocketLogicBridgeOptions) {
     this.#socketPath = socketPath;
     this.#timeoutMs = timeoutMs;
   }

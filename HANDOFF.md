@@ -4,7 +4,7 @@
 
 - Repository: `cotyledonlab/logic-llm-connector` (private)
 - Branch: `main`
-- Last completed implementation commit: `c169373`
+- Latest implementation commit: `c6402e2`
 - Last completed acceptance commit: `a7312cb`
 - Specification: [`SPEC.md`](SPEC.md)
 - Delivery status: [`docs/tickets/README.md`](docs/tickets/README.md)
@@ -71,9 +71,26 @@ Logic running state, and automation state. The safety controller:
   mouse-button input
 
 The menu uses a persistent red `TEST` label with a countdown while active and an
-orange `PAUSED` label with the reason after an interruption. Starting Test Mode
-is intentionally unavailable until ticket 0010 supplies a verified Test Project
-policy context.
+orange `PAUSED` label with the reason after an interruption. A copied Test
+Project with matching observed document identity now enables Test Mode. Start
+and resume both revalidate Accessibility and project policy readiness; identity
+drift pauses automation and cancels pending UI work.
+
+### Test Project lifecycle implementation
+
+Ticket 0010 is implemented through the contract, MCP, native bridge, packaged
+Companion, and deterministic tests, but remains in progress until its opt-in
+real-Logic acceptance passes. MCP exposes `logic_open_test_project`,
+`logic_save_test_project`, `logic_close_test_project`,
+`logic_reopen_test_project`, `logic_cleanup_test_project`, and the
+`logic://project/state` resource.
+
+Fixtures are copied before open into mode-`0700` workspaces below
+`~/Library/Application Support/Logic LLM Connector/Test Projects`. Apple Events
+observe document name, path, and modified state. Every operation rejects an
+identity mismatch; close rejects unsaved changes; visible modal dialogs and
+Automation denial fail explicitly. Cleanup closes only the matching managed
+copy without saving and removes only its owned workspace.
 
 ### Virtual MIDI endpoints
 
@@ -164,9 +181,9 @@ LOGIC_LOCATION_INTEGRATION_TEST=1 npm run test:integration
 
 The latest non-UI gates passed:
 
-- 9 JSON Schema contract tests
-- 3 MCP client tests
-- 38 discovered Swift tests, with 3 real-Logic-only cases skipped in the
+- 10 JSON Schema contract tests
+- 4 MCP client tests
+- 45 discovered Swift tests, with 3 real-Logic-only cases skipped in the
   ordinary native suite
 - certificate-backed package identity test
 - packaged, full-stack real-Logic integration tests covered Doctor, default
@@ -187,12 +204,22 @@ playhead. No audio-device choice was made.
 
 ## Next work
 
-Start [`0010 — Test Project lifecycle`](docs/tickets/0010-test-project-lifecycle.md).
-Define and enforce the dedicated test-directory and copied-fixture policy, then
-add observed project-identity postconditions for open, save, close, and reopen.
-Ticket 0010 must reject user projects, handle or explicitly fail unsaved-change
-and template dialogs, and clean up after successful and failed tests. Its
-verified policy context will enable Exclusive Test Mode activation.
+Finish [`0010 — Test Project lifecycle`](docs/tickets/0010-test-project-lifecycle.md)
+by running its isolated real-Logic acceptance. The last attempt stopped before
+dispatch because Logic has the user project `LLM Jazz.logicx` open with unsaved
+changes. It was not saved, closed, or copied.
+
+After the user closes that document and supplies a saved disposable fixture,
+run:
+
+```sh
+LOGIC_PROJECT_INTEGRATION_TEST=1 \
+LOGIC_TEST_PROJECT_FIXTURE="/absolute/path/to/Fixture.logicx" \
+npm run test:integration
+```
+
+On success, mark ticket 0010 complete, update the delivery map and handoff, then
+commit and push the acceptance checkpoint. Do not begin ticket 0011 first.
 
 ## Important implementation facts
 
@@ -209,6 +236,9 @@ verified policy context will enable Exclusive Test Mode activation.
   adapters. Register pending-operation cancellation before dispatching UI work.
 - `AutomationSafetyMonitor` polls only while Test Mode is active; AppKit renders
   snapshots but does not own safety transitions.
+- `TestProjectLifecycleController` is the sole owner of managed project context.
+  Its default root is under Application Support; never treat an arbitrary open
+  document as a Test Project or delete outside the recorded copied workspace.
 - `VirtualMIDIEndpointOwner` is the stable CoreMIDI seam. It uses MIDI 1.0 UMP,
   preserves host timestamps, serializes endpoint access, and hands receive work
   off the CoreMIDI callback thread.

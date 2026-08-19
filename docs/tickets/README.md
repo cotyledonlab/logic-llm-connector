@@ -16,7 +16,7 @@ passes and the result is committed and pushed.
 | [0007](0007-virtual-midi-endpoint.md) | Complete | Persistent CoreMIDI virtual endpoint |
 | [0008](0008-mackie-onboarding.md) | Complete | Repeatable Logic control-surface setup |
 | [0009](0009-verified-transport.md) | Complete | Play/stop/location with feedback |
-| [0010](0010-test-project-lifecycle.md) | Pending | Safe open/save/close/reopen |
+| [0010](0010-test-project-lifecycle.md) | In progress | Safe open/save/close/reopen; real acceptance pending |
 | [0011](0011-track-operations.md) | Pending | Track creation and selection |
 | [0012](0012-midi-region-operations.md) | Pending | MIDI creation and editing |
 | [0013](0013-audio-and-recording.md) | Pending | Audio regions and recording |
@@ -39,3 +39,6 @@ passes and the result is committed and pushed.
   → ticket 0009 location investigation
 - `c169373` → ticket 0009 absolute project-start locate
 - `a7312cb` → ticket 0009 packaged real-Logic acceptance
+- `19969cf` → ticket 0010 managed Test Project lifecycle core
+- `6aad11f` → ticket 0010 bridge and MCP lifecycle operations
+- `c6402e2` → ticket 0010 Test Mode project-identity safety gate

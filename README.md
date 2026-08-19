@@ -7,9 +7,9 @@ multiple Logic adapters behind one stable interface.
 ## Status
 
 Foundation work is in progress. Environment diagnosis and verified transport
-play, stop, relative movement, and project-start location are supported;
-additional mutating Logic tools are added only after they pass a real-Logic
-integration test.
+play, stop, relative movement, and project-start location are supported. Test
+Project lifecycle tools are implemented and awaiting their opt-in real-Logic
+acceptance run; additional mutating Logic tools are added only after acceptance.
 
 ## Architecture
 
@@ -44,6 +44,17 @@ and exercise reversible play/stop plus opt-in project-start location while
 restoring the observed transport and Cycle state. They do not edit or save the
 open project.
 
+The Test Project lifecycle acceptance is isolated from the ordinary transport
+gate. Logic must be running with no document open, and the fixture must be a
+saved `.logicx` project that the test may copy. The source is never opened or
+modified:
+
+```sh
+LOGIC_PROJECT_INTEGRATION_TEST=1 \
+LOGIC_TEST_PROJECT_FIXTURE="/absolute/path/to/Fixture.logicx" \
+npm run test:integration
+```
+
 ## Current capability
 
 `logic_doctor` reports timestamped evidence for:
@@ -71,13 +82,23 @@ position-display evidence. `logic_locate` supports the absolute
 disables Cycle when necessary and reports success only after both a fresh
 position frame and restoration of the observed Cycle state.
 
+`logic_open_test_project` copies a saved `.logicx` fixture into
+`~/Library/Application Support/Logic LLM Connector/Test Projects` before Logic
+opens it. `logic_save_test_project`, `logic_close_test_project`,
+`logic_reopen_test_project`, and `logic_cleanup_test_project` operate only when
+the observed Logic document identity matches that managed copy. Save and
+cleanup require explicit confirmation; close rejects unsaved changes. The
+`logic://project/state` resource reports the observed front document and whether
+the Test Project policy context is verified.
+
 The signed Companion runs as a menu-bar app. Its menu continuously reports the
 native connection, whether Logic is running, and Exclusive Test Mode status.
 Active automation is marked with a red `TEST` label and countdown; a safety
 pause is marked in orange with its reason. Pause, resume, and emergency stop are
 available from the menu. Test Mode defaults to inactive, expires after at most
-one hour, and cannot start until Accessibility and Test Project policy readiness
-are both present.
+one hour, and cannot start or resume until Accessibility and the current managed
+Test Project identity are both verified. An identity change pauses automation
+and cancels pending UI work.
 
 The Companion also owns stable CoreMIDI MIDI 1.0 virtual endpoints named
 `Logic LLM Connector Out` and `Logic LLM Connector In`. Incoming packets are

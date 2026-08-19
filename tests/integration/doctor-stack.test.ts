@@ -13,6 +13,7 @@ const companionPath = join(
   process.cwd(),
   "build/Logic Companion.app/Contents/MacOS/logic-companion",
 );
+const projectAcceptanceEnabled = process.env["LOGIC_PROJECT_INTEGRATION_TEST"] === "1";
 
 async function waitForSocket(path: string): Promise<void> {
   const deadline = Date.now() + 5_000;
@@ -52,7 +53,9 @@ async function waitForMackieAcceptance(
   throw new Error("Doctor did not return a result");
 }
 
-test("TypeScript diagnoses the running Logic instance through the native socket", async (t) => {
+test("TypeScript diagnoses the running Logic instance through the native socket", {
+  skip: projectAcceptanceEnabled ? "isolated project lifecycle acceptance requested" : false,
+}, async (t) => {
   const socketPath = `/tmp/logic-llm-connector-${process.pid}.sock`;
   await rm(socketPath, { force: true });
 
@@ -321,4 +324,130 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
   assert.equal(nodes[0]?.["title"], undefined);
   assert.equal(nodes[0]?.["value"], undefined);
   assert.equal(nodes[0]?.["description"], undefined);
+});
+
+test("MCP safely opens, saves, closes, reopens, and cleans a copied Test Project", {
+  skip: projectAcceptanceEnabled ? false : "set LOGIC_PROJECT_INTEGRATION_TEST=1",
+  timeout: 120_000,
+}, async (t) => {
+  const fixturePath = process.env["LOGIC_TEST_PROJECT_FIXTURE"];
+  assert.ok(fixturePath, "set LOGIC_TEST_PROJECT_FIXTURE to a saved .logicx fixture");
+  const socketPath = `/tmp/logic-llm-connector-project-${process.pid}.sock`;
+  await rm(socketPath, { force: true });
+  const companion = spawn(companionPath, ["--socket", socketPath], {
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  companion.stderr.setEncoding("utf8");
+  companion.stderr.on("data", (chunk) => { stderr += chunk; });
+  t.after(async () => {
+    companion.kill("SIGTERM");
+    await rm(socketPath, { force: true });
+  });
+  await waitForSocket(socketPath);
+
+  const nativeBridge = new UnixSocketLogicBridge({ socketPath, timeoutMs: 35_000 });
+  const initial = await nativeBridge.projectState({
+    protocolVersion: "1.0.0",
+    operationId: "project-precondition",
+  });
+  assert.equal(
+    initial.data.project,
+    undefined,
+    `close the current Logic document before project acceptance: ${JSON.stringify(initial.data.project)}`,
+  );
+
+  const transport = new StdioClientTransport({
+    command: join(process.cwd(), "node_modules/.bin/tsx"),
+    args: [join(process.cwd(), "packages/mcp-server/src/main.ts")],
+    env: {
+      LOGIC_COMPANION_SOCKET: socketPath,
+      PATH: process.env.PATH ?? "",
+    },
+    cwd: process.cwd(),
+    stderr: "pipe",
+  });
+  const client = new Client({ name: "project-acceptance-client", version: "1.0.0" });
+  await client.connect(transport);
+  t.after(async () => client.close());
+
+  const call = async (name: string, args: Record<string, unknown>) => {
+    const result = await client.callTool({ name, arguments: args });
+    assert.equal(result.isError, undefined, JSON.stringify(result.content));
+    return result.structuredContent as Record<string, unknown>;
+  };
+  const cleanup = async () => call("logic_cleanup_test_project", {
+    confirm: true,
+    timeoutMs: 30_000,
+  });
+
+  let managedPath: string | undefined;
+  try {
+    const opened = await call("logic_open_test_project", {
+      fixturePath,
+      timeoutMs: 30_000,
+    });
+    assert.equal(opened["status"], "succeeded", JSON.stringify(opened));
+    assert.equal(opened["policyContext"], true);
+    managedPath = opened["managedProjectPath"] as string;
+    assert.notEqual(managedPath, fixturePath, "Logic must open the copied fixture, never the source");
+
+    const duplicateOpen = await call("logic_open_test_project", {
+      fixturePath,
+      timeoutMs: 30_000,
+    });
+    assert.equal(duplicateOpen["status"], "failed", JSON.stringify(duplicateOpen));
+    assert.equal(duplicateOpen["failure"], "user_project_open");
+
+    const saved = await call("logic_save_test_project", {
+      confirm: true,
+      timeoutMs: 30_000,
+    });
+    assert.equal(saved["status"], "succeeded", JSON.stringify(saved));
+    assert.equal((saved["project"] as Record<string, unknown>)["modified"], false);
+
+    const closed = await call("logic_close_test_project", { timeoutMs: 30_000 });
+    assert.equal(closed["status"], "succeeded", JSON.stringify(closed));
+    assert.equal(closed["project"], undefined);
+
+    const reopened = await call("logic_reopen_test_project", { timeoutMs: 30_000 });
+    assert.equal(reopened["status"], "succeeded", JSON.stringify(reopened));
+    assert.equal((reopened["project"] as Record<string, unknown>)["path"], managedPath);
+  } finally {
+    const cleaned = await cleanup();
+    assert.equal(cleaned["status"], "succeeded", JSON.stringify(cleaned));
+    assert.equal(cleaned["cleanupPerformed"], true);
+  }
+
+  const afterSuccess = await nativeBridge.projectState({
+    protocolVersion: "1.0.0",
+    operationId: "project-after-success",
+  });
+  assert.equal(afterSuccess.data.project, undefined);
+  assert.equal(afterSuccess.data.managedProjectPath, undefined);
+
+  let injectedFailureObserved = false;
+  try {
+    const opened = await call("logic_open_test_project", {
+      fixturePath,
+      timeoutMs: 30_000,
+    });
+    assert.equal(opened["status"], "succeeded", JSON.stringify(opened));
+    throw new Error("injected test-body failure");
+  } catch (error) {
+    assert.match(String(error), /injected test-body failure/);
+    injectedFailureObserved = true;
+  } finally {
+    const cleaned = await cleanup();
+    assert.equal(cleaned["status"], "succeeded", JSON.stringify(cleaned));
+  }
+  assert.equal(injectedFailureObserved, true);
+  const afterFailure = await nativeBridge.projectState({
+    protocolVersion: "1.0.0",
+    operationId: "project-after-failure",
+  });
+  assert.equal(afterFailure.data.project, undefined);
+  assert.equal(afterFailure.data.managedProjectPath, undefined);
+  assert.equal(stderr, "");
 });
