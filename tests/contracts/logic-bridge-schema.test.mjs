@@ -261,3 +261,53 @@ test("playhead movement is bounded and carries position evidence", async () => {
   request.params.steps = 101;
   assert.equal(validateRequest(request), false);
 });
+
+test("absolute transport locate is bounded to a supported target", async () => {
+  const validateRequest = await validatorFor("request");
+  const validateResponse = await validatorFor("response");
+  const request = {
+    jsonrpc: "2.0",
+    id: "locate-1",
+    method: "logic.transport.locate",
+    params: {
+      protocolVersion: "1.0.0",
+      operationId: "locate-1",
+      target: "project_start",
+      timeoutMs: 1000
+    }
+  };
+  const response = {
+    jsonrpc: "2.0",
+    id: "locate-1",
+    result: {
+      protocolVersion: "1.0.0",
+      operationId: "locate-1",
+      status: "succeeded",
+      reliability: "verified_deterministic",
+      startedAt: "2026-08-18T10:00:00Z",
+      finishedAt: "2026-08-18T10:00:01Z",
+      data: {
+        requestedTarget: "project_start",
+        commandDispatched: true,
+        initialPosition: {
+          display: "0010103009",
+          observedAt: "2026-08-18T10:00:00Z"
+        },
+        position: {
+          display: "0010101001",
+          observedAt: "2026-08-18T10:00:01Z"
+        }
+      },
+      evidence: [{
+        source: "Mackie Control position feedback",
+        observedAt: "2026-08-18T10:00:01Z",
+        value: { display: "0010101001", target: "project_start" }
+      }]
+    }
+  };
+
+  assert.equal(validateRequest(request), true, JSON.stringify(validateRequest.errors));
+  assert.equal(validateResponse(response), true, JSON.stringify(validateResponse.errors));
+  request.params.target = "left_locator";
+  assert.equal(validateRequest(request), false);
+});

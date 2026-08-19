@@ -217,6 +217,10 @@ public enum TransportMoveDirection: String, Codable, Sendable {
     case forward
 }
 
+public enum TransportLocateTarget: String, Codable, Sendable {
+    case projectStart = "project_start"
+}
+
 public struct TransportPositionData: Codable, Sendable, Equatable {
     public let display: String?
     public let observedAt: Date?
@@ -224,6 +228,31 @@ public struct TransportPositionData: Codable, Sendable, Equatable {
     public init(display: String?, observedAt: Date?) {
         self.display = display
         self.observedAt = observedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case display
+        case observedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        display = try container.decodeIfPresent(String.self, forKey: .display)
+        observedAt = try container.decodeIfPresent(Date.self, forKey: .observedAt)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        if let display {
+            try container.encode(display, forKey: .display)
+        } else {
+            try container.encodeNil(forKey: .display)
+        }
+        if let observedAt {
+            try container.encode(observedAt, forKey: .observedAt)
+        } else {
+            try container.encodeNil(forKey: .observedAt)
+        }
     }
 }
 
@@ -257,6 +286,47 @@ public struct TransportLocationOperationResult: Codable, Sendable, Equatable {
     public let startedAt: Date
     public let finishedAt: Date
     public let data: TransportLocationOperationData
+    public let evidence: [Evidence]
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion
+        case operationID = "operationId"
+        case status
+        case reliability
+        case startedAt
+        case finishedAt
+        case data
+        case evidence
+    }
+}
+
+public struct TransportLocateOperationData: Codable, Sendable, Equatable {
+    public let requestedTarget: TransportLocateTarget
+    public let commandDispatched: Bool
+    public let initialPosition: TransportPositionData
+    public let position: TransportPositionData
+
+    public init(
+        requestedTarget: TransportLocateTarget,
+        commandDispatched: Bool,
+        initialPosition: TransportPositionData,
+        position: TransportPositionData
+    ) {
+        self.requestedTarget = requestedTarget
+        self.commandDispatched = commandDispatched
+        self.initialPosition = initialPosition
+        self.position = position
+    }
+}
+
+public struct TransportLocateOperationResult: Codable, Sendable, Equatable {
+    public let protocolVersion: String
+    public let operationID: String
+    public let status: OperationStatus
+    public let reliability: Reliability
+    public let startedAt: Date
+    public let finishedAt: Date
+    public let data: TransportLocateOperationData
     public let evidence: [Evidence]
 
     enum CodingKeys: String, CodingKey {

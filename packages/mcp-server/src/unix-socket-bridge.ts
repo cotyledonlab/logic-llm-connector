@@ -6,6 +6,7 @@ import type {
   LogicBridge,
   TransportOperationResult,
   TransportLocationOperationResult,
+  TransportLocateOperationResult,
   TransportStateResult,
 } from "./server.js";
 
@@ -63,6 +64,15 @@ export class UnixSocketLogicBridge implements LogicBridge {
     timeoutMs: number;
   }): Promise<TransportLocationOperationResult> {
     return this.#request("logic.transport.movePlayhead", request);
+  }
+
+  locateTransport(request: {
+    protocolVersion: "1.0.0";
+    operationId: string;
+    target: "project_start";
+    timeoutMs: number;
+  }): Promise<TransportLocateOperationResult> {
+    return this.#request("logic.transport.locate", request);
   }
 
   #request<Result>(method: string, params: object): Promise<Result> {

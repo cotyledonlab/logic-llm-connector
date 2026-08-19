@@ -125,6 +125,27 @@ private struct TransportMovePlayheadRequest: Codable {
     let params: TransportMovePlayheadParameters
 }
 
+private struct TransportLocateParameters: Codable {
+    let protocolVersion: String
+    let operationID: String
+    let target: TransportLocateTarget
+    let timeoutMs: Int
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion
+        case operationID = "operationId"
+        case target
+        case timeoutMs
+    }
+}
+
+private struct TransportLocateRequest: Codable {
+    let jsonrpc: String
+    let id: JSONRPCID
+    let method: String
+    let params: TransportLocateParameters
+}
+
 private struct JSONRPCResponse<Result: Codable>: Codable {
     let jsonrpc: String
     let id: JSONRPCID
@@ -169,6 +190,8 @@ public struct BridgeRouter: Sendable {
             return try routeTransportSetPlaying(data)
         case "logic.transport.movePlayhead":
             return try routeTransportMovePlayhead(data)
+        case "logic.transport.locate":
+            return try routeTransportLocate(data)
         default:
             throw BridgeRouterError.unsupportedMethod(envelope.method)
         }
@@ -215,6 +238,23 @@ public struct BridgeRouter: Sendable {
                 result: transport.movePlayhead(
                     request.params.direction,
                     steps: request.params.steps,
+                    operationID: request.params.operationID,
+                    timeoutMilliseconds: request.params.timeoutMs
+                )
+            )
+        )
+    }
+
+    private func routeTransportLocate(_ data: Data) throws -> Data {
+        guard let transport else { throw BridgeRouterError.transportUnavailable }
+        let request = try JSONDecoder().decode(TransportLocateRequest.self, from: data)
+        try validateProtocolVersion(request.params.protocolVersion)
+        return try JSONEncoder.bridge.encode(
+            JSONRPCResponse(
+                jsonrpc: "2.0",
+                id: request.id,
+                result: transport.locate(
+                    request.params.target,
                     operationID: request.params.operationID,
                     timeoutMilliseconds: request.params.timeoutMs
                 )

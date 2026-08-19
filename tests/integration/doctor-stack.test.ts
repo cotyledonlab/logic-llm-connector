@@ -135,6 +135,7 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
     "logic_play",
     "logic_stop",
     "logic_move_playhead",
+    "logic_locate",
   ]);
   const mcpResult = await client.callTool({ name: "logic_doctor", arguments: {} });
   assert.equal(mcpResult.isError, undefined);
@@ -154,6 +155,11 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
     JSON.stringify(initialTransport),
   );
   const restorePlaying = initialTransport.data.playing === "playing";
+  assert.notEqual(
+    initialTransport.data.cycle,
+    "unknown",
+    "real-Logic transport acceptance requires observable Cycle feedback",
+  );
   let transportFailure: unknown;
   try {
     const stopped = await client.callTool({
@@ -167,8 +173,15 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
     );
 
     if (process.env["LOGIC_LOCATION_INTEGRATION_TEST"] === "1") {
-      let locationStart: string | null = null;
-      let locationCurrent: string | null = null;
+      const baseline = await bridge.locateTransport({
+        protocolVersion: "1.0.0",
+        operationId: "location-baseline",
+        target: "project_start",
+        timeoutMs: 1500,
+      });
+      assert.equal(baseline.status, "succeeded", JSON.stringify(baseline));
+      const locationStart = baseline.data.position.display;
+      assert.ok(locationStart, JSON.stringify(baseline));
       try {
         const moved = await bridge.moveTransportPlayhead({
           protocolVersion: "1.0.0",
@@ -177,8 +190,7 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
           steps: 10,
           timeoutMs: 1500,
         });
-        locationStart = moved.data.initialPosition.display;
-        locationCurrent = moved.data.position.display;
+        const locationCurrent = moved.data.position.display;
         assert.equal(moved.status, "succeeded", JSON.stringify(moved));
         assert.equal(moved.reliability, "verified_deterministic");
         assert.ok(
@@ -186,32 +198,19 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
           JSON.stringify(moved),
         );
 
-        const restored = await bridge.moveTransportPlayhead({
+      } finally {
+        const restored = await bridge.locateTransport({
           protocolVersion: "1.0.0",
-          operationId: "location-backward",
-          direction: "backward",
-          steps: 10,
+          operationId: "location-restore",
+          target: "project_start",
           timeoutMs: 1500,
         });
-        locationCurrent = restored.data.position.display;
         assert.equal(restored.status, "succeeded", JSON.stringify(restored));
-        assert.equal(locationCurrent, locationStart, JSON.stringify(restored));
-      } finally {
-        for (
-          let attempt = 0;
-          locationStart && locationCurrent && locationCurrent !== locationStart && attempt < 8;
-          attempt += 1
-        ) {
-          const recovery = await bridge.moveTransportPlayhead({
-            protocolVersion: "1.0.0",
-            operationId: `location-recovery-${attempt}`,
-            direction: locationCurrent < locationStart ? "forward" : "backward",
-            steps: 1,
-            timeoutMs: 1500,
-          });
-          locationCurrent = recovery.data.position.display;
-        }
-        assert.equal(locationCurrent, locationStart, "real-Logic playhead restoration failed");
+        assert.equal(
+          restored.data.position.display,
+          locationStart,
+          "real-Logic playhead restoration failed",
+        );
       }
     }
 
@@ -295,6 +294,7 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
     "logic_play",
     "logic_stop",
     "logic_move_playhead",
+    "logic_locate",
     "logic_inspect_ui",
   ]);
   const inspection = await diagnosticClient.callTool({

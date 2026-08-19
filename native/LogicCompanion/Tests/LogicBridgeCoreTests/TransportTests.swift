@@ -233,3 +233,86 @@ func sparsePositionUpdatesDoNotVerifyRelativeJog() {
     #expect(result.status != .succeeded)
     #expect(result.reliability != .verifiedDeterministic)
 }
+
+@Test("project-start locate uses double STOP and fresh position feedback")
+func projectStartLocateUsesDoubleStopAndFreshPositionFeedback() {
+    let monitor = MackieControlFeedbackMonitor()
+    monitor.record([MIDIMessage(timestamp: 1, words: [0x2090_5600, 0x2090_5D7F])])
+    let midi = FakeTransportMIDI { message in
+        if message.words.first == 0x2090_357F {
+            recordPosition("0010101001", in: monitor)
+        }
+    }
+    let controller = MackieTransportController(midi: midi, feedback: monitor)
+
+    let result = controller.locate(
+        .projectStart,
+        operationID: "locate-start",
+        timeoutMilliseconds: 500
+    )
+
+    #expect(midi.sent.map(\.words) == [
+        [0x2090_5D7F], [0x2090_5D00],
+        [0x2090_5D7F], [0x2090_5D00],
+        [0x2090_357F], [0x2090_3500],
+        [0x2090_357F], [0x2090_3500],
+    ])
+    #expect(result.status == .succeeded)
+    #expect(result.reliability == .verifiedDeterministic)
+    #expect(result.data.requestedTarget == .projectStart)
+    #expect(result.data.initialPosition.display == nil)
+    #expect(result.data.position.display == "0010101001")
+}
+
+@Test("project-start locate restores an enabled cycle")
+func projectStartLocateRestoresEnabledCycle() {
+    let monitor = MackieControlFeedbackMonitor()
+    monitor.record([MIDIMessage(timestamp: 1, words: [0x2090_567F, 0x2090_5D7F])])
+    recordPosition("0010103009", in: monitor)
+    let midi = FakeTransportMIDI { message in
+        switch message.words.first {
+        case 0x2090_567F:
+            let cycleWord: UInt32 = monitor.feedbackSnapshot.transportState.cycle == .enabled
+                ? 0x2090_5600
+                : 0x2090_567F
+            monitor.record([MIDIMessage(timestamp: 1, words: [cycleWord])])
+        case 0x2090_357F:
+            recordPosition("0010101001", in: monitor)
+        default:
+            break
+        }
+    }
+    let controller = MackieTransportController(midi: midi, feedback: monitor)
+
+    let result = controller.locate(
+        .projectStart,
+        operationID: "locate-cycle-restore",
+        timeoutMilliseconds: 500
+    )
+
+    #expect(result.status == .succeeded)
+    #expect(result.reliability == .verifiedDeterministic)
+    #expect(result.data.position.display == "0010101001")
+    #expect(monitor.feedbackSnapshot.transportState.cycle == .enabled)
+    #expect(midi.sent.map(\.words).filter { $0 == [0x2090_567F] }.count == 2)
+}
+
+@Test("project-start locate rejects unknown cycle state without dispatch")
+func projectStartLocateRejectsUnknownCycle() {
+    let monitor = MackieControlFeedbackMonitor()
+    recordPosition("0010103009", in: monitor)
+    let midi = FakeTransportMIDI()
+    let controller = MackieTransportController(midi: midi, feedback: monitor)
+
+    let result = controller.locate(
+        .projectStart,
+        operationID: "locate-cycle-unknown",
+        timeoutMilliseconds: 500
+    )
+
+    #expect(result.status == .failed)
+    #expect(result.reliability == .unsupported)
+    #expect(!result.data.commandDispatched)
+    #expect(midi.sent.isEmpty)
+    #expect(result.evidence.last?.source == "Mackie Control locate precondition")
+}

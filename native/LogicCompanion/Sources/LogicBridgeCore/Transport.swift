@@ -13,6 +13,11 @@ public protocol TransportControlling: Sendable {
         operationID: String,
         timeoutMilliseconds: Int
     ) -> TransportLocationOperationResult
+    func locate(
+        _ target: TransportLocateTarget,
+        operationID: String,
+        timeoutMilliseconds: Int
+    ) -> TransportLocateOperationResult
 }
 
 public struct MackieTransportController: TransportControlling, Sendable {
@@ -263,6 +268,170 @@ public struct MackieTransportController: TransportControlling, Sendable {
         )
     }
 
+    public func locate(
+        _ target: TransportLocateTarget,
+        operationID: String,
+        timeoutMilliseconds: Int
+    ) -> TransportLocateOperationResult {
+        let startedAt = now()
+        let initial = feedback.feedbackSnapshot
+        guard initial.transportState.cycle != .unknown else {
+            return locateResult(
+                operationID: operationID,
+                target: target,
+                dispatched: false,
+                status: .failed,
+                reliability: .unsupported,
+                startedAt: startedAt,
+                initial: initial,
+                latest: initial,
+                extraEvidence: [Evidence(
+                    source: "Mackie Control locate precondition",
+                    observedAt: now(),
+                    value: .string("Cycle state must be observable")
+                )]
+            )
+        }
+
+        guard midi.snapshot.sourceAvailable else {
+            return locateResult(
+                operationID: operationID,
+                target: target,
+                dispatched: false,
+                status: .failed,
+                reliability: .unsupported,
+                startedAt: startedAt,
+                initial: initial,
+                latest: initial
+            )
+        }
+
+        let deadline = startedAt.addingTimeInterval(
+            TimeInterval(timeoutMilliseconds) / 1_000
+        )
+        let firstRefreshDeadline = startedAt.addingTimeInterval(
+            TimeInterval(timeoutMilliseconds) / 2_000
+        )
+        var firstRefreshSequence: UInt64?
+        var cycleDisabledSequence: UInt64?
+        var cycleDisabledByOperation = false
+        var cycleRestoreAttempted = false
+        do {
+            if initial.transportState.cycle == .enabled {
+                try press(.cycle)
+                let cycleDeadline = startedAt.addingTimeInterval(
+                    TimeInterval(timeoutMilliseconds) / 4_000
+                )
+                while now() < cycleDeadline {
+                    let updated = feedback.feedbackSnapshot
+                    if updated.transportSequence > initial.transportSequence,
+                       updated.transportState.cycle == .disabled {
+                        cycleDisabledSequence = updated.transportSequence
+                        cycleDisabledByOperation = true
+                        break
+                    }
+                    wait(0.01)
+                }
+                guard cycleDisabledByOperation else {
+                    return locateResult(
+                        operationID: operationID,
+                        target: target,
+                        dispatched: true,
+                        status: .timedOut,
+                        reliability: .bestEffort,
+                        startedAt: startedAt,
+                        initial: initial,
+                        latest: feedback.feedbackSnapshot,
+                        extraEvidence: [Evidence(
+                            source: "Mackie Control Cycle feedback deadline",
+                            observedAt: now(),
+                            value: .number(Double(timeoutMilliseconds) / 4)
+                        )]
+                    )
+                }
+            }
+
+            // Logic's Mackie mapping defines a second STOP press as project-start
+            // locate when Cycle is off. Two presses cover both playing and stopped
+            // initial states without changing project content.
+            try press(.stop)
+            try press(.stop)
+            try press(.smpteBeats)
+            while now() < firstRefreshDeadline {
+                let refreshed = feedback.feedbackSnapshot
+                if refreshed.positionSequence > initial.positionSequence {
+                    firstRefreshSequence = refreshed.positionSequence
+                    break
+                }
+                wait(0.01)
+            }
+            try press(.smpteBeats)
+            if cycleDisabledByOperation {
+                cycleRestoreAttempted = true
+                try press(.cycle)
+            }
+        } catch {
+            if cycleDisabledByOperation && !cycleRestoreAttempted {
+                try? press(.cycle)
+            }
+            return locateResult(
+                operationID: operationID,
+                target: target,
+                dispatched: true,
+                status: .failed,
+                reliability: .bestEffort,
+                startedAt: startedAt,
+                initial: initial,
+                latest: feedback.feedbackSnapshot,
+                extraEvidence: [Evidence(
+                    source: "CoreMIDI dispatch",
+                    observedAt: now(),
+                    value: .string(String(describing: error))
+                )]
+            )
+        }
+
+        var latest = feedback.feedbackSnapshot
+        while now() < deadline {
+            latest = feedback.feedbackSnapshot
+            let cycleRestored = initial.transportState.cycle == .disabled
+                || (latest.transportState.cycle == .enabled
+                    && latest.transportSequence > (cycleDisabledSequence ?? 0))
+            if let firstRefreshSequence,
+               latest.positionSequence > firstRefreshSequence,
+               latest.positionDisplay != nil,
+               cycleRestored {
+                return locateResult(
+                    operationID: operationID,
+                    target: target,
+                    dispatched: true,
+                    status: .succeeded,
+                    reliability: .verifiedDeterministic,
+                    startedAt: startedAt,
+                    initial: initial,
+                    latest: latest
+                )
+            }
+            wait(0.01)
+        }
+
+        return locateResult(
+            operationID: operationID,
+            target: target,
+            dispatched: true,
+            status: .timedOut,
+            reliability: .bestEffort,
+            startedAt: startedAt,
+            initial: initial,
+            latest: latest,
+            extraEvidence: [Evidence(
+                source: "Mackie Control position feedback deadline",
+                observedAt: now(),
+                value: .number(Double(timeoutMilliseconds))
+            )]
+        )
+    }
+
     private func press(_ note: MackieTransportNote) throws {
         let timestamp: UInt64 = 0
         try midi.send(MIDIMessage(
@@ -368,6 +537,62 @@ public struct MackieTransportController: TransportControlling, Sendable {
             data: TransportLocationOperationData(
                 requestedDirection: direction,
                 steps: steps,
+                commandDispatched: dispatched,
+                initialPosition: initialPosition,
+                position: position
+            ),
+            evidence: evidence
+        )
+    }
+
+    private func locateResult(
+        operationID: String,
+        target: TransportLocateTarget,
+        dispatched: Bool,
+        status: OperationStatus,
+        reliability: Reliability,
+        startedAt: Date,
+        initial: MackieControlFeedbackSnapshot,
+        latest: MackieControlFeedbackSnapshot,
+        extraEvidence: [Evidence] = []
+    ) -> TransportLocateOperationResult {
+        let initialPosition = TransportPositionData(
+            display: initial.positionDisplay,
+            observedAt: initial.positionObservedAt
+        )
+        let position = TransportPositionData(
+            display: latest.positionDisplay,
+            observedAt: latest.positionObservedAt
+        )
+        var evidence = extraEvidence
+        if let observedAt = latest.transportState.observedAt {
+            evidence.insert(Evidence(
+                source: "Mackie Control Cycle feedback",
+                observedAt: observedAt,
+                value: .string(latest.transportState.cycle.rawValue)
+            ), at: 0)
+        }
+        if let observedAt = latest.positionObservedAt,
+           let display = latest.positionDisplay {
+            evidence.insert(Evidence(
+                source: "Mackie Control position feedback",
+                observedAt: observedAt,
+                value: .object([
+                    "sequence": .number(Double(latest.positionSequence)),
+                    "display": .string(display),
+                    "target": .string(target.rawValue),
+                ])
+            ), at: 0)
+        }
+        return TransportLocateOperationResult(
+            protocolVersion: bridgeProtocolVersion,
+            operationID: operationID,
+            status: status,
+            reliability: reliability,
+            startedAt: startedAt,
+            finishedAt: now(),
+            data: TransportLocateOperationData(
+                requestedTarget: target,
                 commandDispatched: dispatched,
                 initialPosition: initialPosition,
                 position: position

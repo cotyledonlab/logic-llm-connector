@@ -59,6 +59,9 @@ test("an MCP client can diagnose Logic readiness", async (t) => {
     async moveTransportPlayhead() {
       throw new Error("transport is not used in this test");
     },
+    async locateTransport() {
+      throw new Error("transport is not used in this test");
+    },
   };
 
   const server = createLogicMcpServer({ bridge, createOperationId: () => "op-1" });
@@ -78,6 +81,7 @@ test("an MCP client can diagnose Logic readiness", async (t) => {
     "logic_play",
     "logic_stop",
     "logic_move_playhead",
+    "logic_locate",
   ]);
 
   const result = await client.callTool({ name: "logic_doctor", arguments: {} });
@@ -156,6 +160,9 @@ test("UI inspection is absent by default and available only when enabled", async
     async moveTransportPlayhead() {
       throw new Error("transport is not used in this test");
     },
+    async locateTransport() {
+      throw new Error("transport is not used in this test");
+    },
   };
   const disabledServer = createLogicMcpServer({
     bridge,
@@ -171,6 +178,7 @@ test("UI inspection is absent by default and available only when enabled", async
     "logic_play",
     "logic_stop",
     "logic_move_playhead",
+    "logic_locate",
   ]);
   await disabledClient.close();
   await disabledServer.close();
@@ -194,6 +202,7 @@ test("UI inspection is absent by default and available only when enabled", async
     "logic_play",
     "logic_stop",
     "logic_move_playhead",
+    "logic_locate",
     "logic_inspect_ui",
   ]);
   const result = await client.callTool({
@@ -291,6 +300,28 @@ test("transport tools and resource preserve verified native outcomes", async (t)
         }],
       };
     },
+    async locateTransport(request) {
+      calls.push(request);
+      return {
+        protocolVersion: "1.0.0",
+        operationId: request.operationId,
+        status: "succeeded",
+        reliability: "verified_deterministic",
+        startedAt: timestamp,
+        finishedAt: timestamp,
+        data: {
+          requestedTarget: request.target,
+          commandDispatched: true,
+          initialPosition: { display: "0000000101", observedAt: timestamp },
+          position: { display: "0000000100", observedAt: timestamp },
+        },
+        evidence: [{
+          source: "Mackie Control position feedback",
+          observedAt: timestamp,
+          value: { display: "0000000100", target: "project_start" },
+        }],
+      };
+    },
   };
   let operation = 0;
   const server = createLogicMcpServer({
@@ -331,11 +362,31 @@ test("transport tools and resource preserve verified native outcomes", async (t)
     }],
   });
 
+  const locate = await client.callTool({
+    name: "logic_locate",
+    arguments: { target: "project_start", timeoutMs: 750 },
+  });
+  assert.equal(locate.isError, undefined);
+  assert.deepEqual(locate.structuredContent, {
+    operationId: "transport-3",
+    status: "succeeded",
+    reliability: "verified_deterministic",
+    requestedTarget: "project_start",
+    commandDispatched: true,
+    initialPosition: { display: "0000000101", observedAt: timestamp },
+    position: { display: "0000000100", observedAt: timestamp },
+    evidence: [{
+      source: "Mackie Control position feedback",
+      observedAt: timestamp,
+      value: { display: "0000000100", target: "project_start" },
+    }],
+  });
+
   const resource = await client.readResource({ uri: "logic://transport/state" });
   const resourceContent = resource.contents[0];
   assert.ok(resourceContent && "text" in resourceContent);
   assert.deepEqual(JSON.parse(resourceContent.text), {
-    operationId: "transport-3",
+    operationId: "transport-4",
     status: "succeeded",
     reliability: "verified_deterministic",
     state,
@@ -355,6 +406,12 @@ test("transport tools and resource preserve verified native outcomes", async (t)
       steps: 1,
       timeoutMs: 750,
     },
-    { protocolVersion: "1.0.0", operationId: "transport-3" },
+    {
+      protocolVersion: "1.0.0",
+      operationId: "transport-3",
+      target: "project_start",
+      timeoutMs: 750,
+    },
+    { protocolVersion: "1.0.0", operationId: "transport-4" },
   ]);
 });

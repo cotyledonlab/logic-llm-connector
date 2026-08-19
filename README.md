@@ -63,6 +63,12 @@ states are idempotent; missing endpoints, feedback timeouts, and dispatch errors
 remain explicit. The `logic://transport/state` MCP resource exposes observed
 playback, cycle, and record-button readiness state.
 
+`logic_move_playhead` performs bounded relative jogs with coherent Mackie
+position-display evidence. `logic_locate` supports the absolute
+`project_start` target using Logic's Mackie STOP mapping. It temporarily
+disables Cycle when necessary and reports success only after both a fresh
+position frame and restoration of the observed Cycle state.
+
 The signed Companion runs as a menu-bar app. Its menu continuously reports the
 native connection, whether Logic is running, and Exclusive Test Mode status.
 Active automation is marked with a red `TEST` label and countdown; a safety

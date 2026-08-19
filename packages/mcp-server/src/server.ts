@@ -105,6 +105,15 @@ export interface TransportLocationOperationResult extends Omit<TransportStateRes
   };
 }
 
+export interface TransportLocateOperationResult extends Omit<TransportStateResult, "data"> {
+  data: {
+    requestedTarget: "project_start";
+    commandDispatched: boolean;
+    initialPosition: TransportPosition;
+    position: TransportPosition;
+  };
+}
+
 export interface LogicBridge {
   doctor(request: {
     protocolVersion: typeof BRIDGE_PROTOCOL_VERSION;
@@ -133,6 +142,12 @@ export interface LogicBridge {
     steps: number;
     timeoutMs: number;
   }): Promise<TransportLocationOperationResult>;
+  locateTransport(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION;
+    operationId: string;
+    target: "project_start";
+    timeoutMs: number;
+  }): Promise<TransportLocateOperationResult>;
 }
 
 export interface LogicMcpServerDependencies {
@@ -239,6 +254,22 @@ const transportLocationOutputSchema = z.object({
   ]),
   requestedDirection: z.enum(["backward", "forward"]),
   steps: z.number().int().min(1).max(100),
+  commandDispatched: z.boolean(),
+  initialPosition: transportPositionSchema,
+  position: transportPositionSchema,
+  evidence: z.array(evidenceSchema),
+});
+
+const transportLocateOutputSchema = z.object({
+  operationId: z.string(),
+  status: z.enum(["succeeded", "partial", "failed", "cancelled", "timed_out"]),
+  reliability: z.enum([
+    "verified_deterministic",
+    "verified_ui_driven",
+    "best_effort",
+    "unsupported",
+  ]),
+  requestedTarget: z.literal("project_start"),
   commandDispatched: z.boolean(),
   initialPosition: transportPositionSchema,
   position: transportPositionSchema,
@@ -375,6 +406,51 @@ export function createLogicMcpServer({
         reliability: result.reliability,
         requestedDirection: result.data.requestedDirection,
         steps: result.data.steps,
+        commandDispatched: result.data.commandDispatched,
+        initialPosition: result.data.initialPosition,
+        position: result.data.position,
+        evidence: result.evidence,
+      };
+      return {
+        content: [{
+          type: "text",
+          text: `Logic playhead position is ${result.data.position.display ?? "unknown"} (${result.status}).`,
+        }],
+        structuredContent,
+      };
+    },
+  );
+
+  server.registerTool(
+    "logic_locate",
+    {
+      title: "Locate Logic transport",
+      description:
+        "Move the Logic playhead to a supported absolute target through Mackie Control and verify fresh position feedback while preserving observed Cycle state.",
+      inputSchema: z.object({
+        target: z.literal("project_start").default("project_start"),
+        timeoutMs: z.number().int().min(100).max(5000).default(1500),
+      }),
+      outputSchema: transportLocateOutputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ target, timeoutMs }) => {
+      const result = await bridge.locateTransport({
+        protocolVersion: BRIDGE_PROTOCOL_VERSION,
+        operationId: createOperationId(),
+        target,
+        timeoutMs,
+      });
+      const structuredContent = {
+        operationId: result.operationId,
+        status: result.status,
+        reliability: result.reliability,
+        requestedTarget: result.data.requestedTarget,
         commandDispatched: result.data.commandDispatched,
         initialPosition: result.data.initialPosition,
         position: result.data.position,

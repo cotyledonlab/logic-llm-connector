@@ -115,6 +115,38 @@ private struct FixedTransportController: TransportControlling {
         )
     }
 
+    func locate(
+        _ target: TransportLocateTarget,
+        operationID: String,
+        timeoutMilliseconds: Int
+    ) -> TransportLocateOperationResult {
+        TransportLocateOperationResult(
+            protocolVersion: bridgeProtocolVersion,
+            operationID: operationID,
+            status: .succeeded,
+            reliability: .verifiedDeterministic,
+            startedAt: timestamp,
+            finishedAt: timestamp,
+            data: TransportLocateOperationData(
+                requestedTarget: target,
+                commandDispatched: true,
+                initialPosition: TransportPositionData(
+                    display: "0000000101",
+                    observedAt: timestamp
+                ),
+                position: TransportPositionData(
+                    display: "0000000100",
+                    observedAt: timestamp
+                )
+            ),
+            evidence: [Evidence(
+                source: "Mackie Control position feedback",
+                observedAt: timestamp,
+                value: .string("0000000100")
+            )]
+        )
+    }
+
     private func state(_ playing: TransportPlayingState) -> TransportStateData {
         TransportStateData(
             playing: playing,
@@ -210,6 +242,9 @@ func bridgeRoutesTransportRequests() throws {
     let moveRequest = """
     {"jsonrpc":"2.0","id":"move-1","method":"logic.transport.movePlayhead","params":{"protocolVersion":"1.0.0","operationId":"move-1","direction":"forward","steps":1,"timeoutMs":750}}
     """.data(using: .utf8)!
+    let locateRequest = """
+    {"jsonrpc":"2.0","id":"locate-1","method":"logic.transport.locate","params":{"protocolVersion":"1.0.0","operationId":"locate-1","target":"project_start","timeoutMs":750}}
+    """.data(using: .utf8)!
 
     let stateResponse = try #require(
         JSONSerialization.jsonObject(with: router.handle(stateRequest)) as? [String: Any]
@@ -237,4 +272,14 @@ func bridgeRoutesTransportRequests() throws {
     #expect(moveData["requestedDirection"] as? String == "forward")
     #expect(moveData["steps"] as? Int == 1)
     #expect(position["display"] as? String == "0000000101")
+
+    let locateResponse = try #require(
+        JSONSerialization.jsonObject(with: router.handle(locateRequest)) as? [String: Any]
+    )
+    let locateResult = try #require(locateResponse["result"] as? [String: Any])
+    let locateData = try #require(locateResult["data"] as? [String: Any])
+    let locatedPosition = try #require(locateData["position"] as? [String: Any])
+    #expect(locateResult["status"] as? String == "succeeded")
+    #expect(locateData["requestedTarget"] as? String == "project_start")
+    #expect(locatedPosition["display"] as? String == "0000000100")
 }

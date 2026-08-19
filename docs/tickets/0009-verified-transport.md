@@ -47,6 +47,17 @@ postcondition.
   requested direction. Missing refreshes or unchanged positions time out.
 - A focused packaged real-Logic run moved ten jog detents forward and ten back
   and exactly restored a project-start position.
+- `logic_locate` exposes the supported absolute `project_start` target through
+  `logic.transport.locate` at the native seam.
+- Project-start locate uses Logic's documented Mackie behavior: two STOP
+  presses with Cycle disabled, followed by the reversible SMPTE/BEATS refresh
+  barrier and a fresh coherent position frame.
+- When Cycle is observably enabled, locate disables it, verifies the returned
+  LED state, performs the locate, restores Cycle, and verifies restoration.
+  Unknown Cycle state fails closed without dispatch.
+- The opt-in real-location acceptance now establishes project start, performs a
+  relative forward jog, and restores exactly with the absolute locate rather
+  than assuming inverse jog symmetry.
 
 The location investigation showed why the earlier quiet-period heuristic was
 invalid: Logic emits sparse character changes without a standalone frame-end
@@ -54,9 +65,14 @@ message. The reversible display-format refresh supplies explicit descending
 start and end controllers while preserving unchanged characters from the last
 committed frame.
 
-Exact restoration is still not general. A later full-gate run began at
+Relative restoration is not general. A prior full-gate run began at
 `0010103009`; equal ten-detent moves and bounded one-detent recovery finished at
-`0010101001`, not the initial display. The exact-restoration block therefore
-runs only when `LOGIC_LOCATION_INTEGRATION_TEST=1` and ticket 0009 remains in
-progress. The next slice needs an absolute supported locate target or another
-restoration mechanism that does not assume inverse jog symmetry.
+`0010101001`, not the initial display. The new absolute project-start path has
+contract, MCP, router, and native unit coverage, but its packaged real-Logic
+acceptance remains opt-in behind `LOGIC_LOCATION_INTEGRATION_TEST=1` and has not
+yet completed in the current UI session. The full-stack rerun is presently
+blocked because the packaged AX observer reports `setup_window_closed` while
+the Control Surface Setup window is visibly open; a separately launched
+Companion also received no fresh Mackie traffic. Ticket 0009 remains in progress
+until that environmental observation issue is cleared and the absolute locate
+acceptance passes.
