@@ -1,10 +1,10 @@
-# Handoff — 2026-08-18
+# Handoff — 2026-08-19
 
 ## Repository state
 
 - Repository: `cotyledonlab/logic-llm-connector` (private)
 - Branch: `main`
-- Last completed implementation commit: `dfddb3a`
+- Last completed implementation commit: `2e11de0`
 - Last completed acceptance commit: `6a4a495`
 - Specification: [`SPEC.md`](SPEC.md)
 - Delivery status: [`docs/tickets/README.md`](docs/tickets/README.md)
@@ -26,28 +26,24 @@
 Ticket 0006 was deliberately split after its tracer bullet proved that AX
 inspection and mutable automation safety are separate vertical slices.
 
-## In-progress ticket
+## Transport progress
 
-Ticket 0009 has a completed and pushed play/stop tracer bullet. MCP now exposes
-`logic_play`, `logic_stop`, and the `logic://transport/state` resource. The
-Companion sends Mackie Control button press/release messages and decodes returned
-cycle, stop, play, and record LEDs. A command succeeds only when returned
-feedback observes the requested state; already-observed states are idempotent.
-Endpoint failures, dispatch errors, and feedback timeouts have explicit
-outcomes.
+MCP exposes `logic_play`, `logic_stop`, `logic_move_playhead`, and the
+`logic://transport/state` resource. Play and stop are established only by newer
+matching Mackie LED feedback. Location uses descending position-display frames,
+with omitted unchanged digits carried from the prior committed frame. Isolated
+sparse updates never establish success.
 
-An experimental location slice is also pushed: `logic_move_playhead` sends
-Mackie jog-wheel messages and observes the ten-character Mackie position
-display. Blank-padded display characters are normalized to zero. This slice is
-not accepted against real Logic and must not yet be treated as deterministic.
+Playhead movement uses a reversible SMPTE/BEATS refresh barrier: the Companion
+waits for one committed frame after switching formats, switches back, and waits
+for a second committed frame before comparing direction. This establishes a
+coherent directional postcondition, but equal inverse jogs are not a general
+restoration mechanism.
 
-Packaged acceptance exercised stop, focus-independent play with Finder
-frontmost, resource observation, stop, and restoration of the original play
-state. The open Logic project was not edited or saved.
-
-Ticket 0009 remains in progress because real-Logic testing showed that the
-current location postcondition and inverse-jog restoration strategy are not
-reliable.
+One focused run restored a project-start display exactly. A later full-gate run
+began at `0010103009` and recovered only to `0010101001`, so the exact location
+acceptance remains opt-in behind `LOGIC_LOCATION_INTEGRATION_TEST=1`. Ticket 0009
+is still in progress. The open Logic project was not edited or saved.
 
 ### Exclusive Test Mode
 
@@ -113,12 +109,14 @@ The result is bounded by `maxDepth` (0–8) and `maxNodes` (1–1000). Nodes con
 role, subrole, identifier, enabled/focused flags, parent, and child count. The
 model cannot contain titles, values, descriptions, or UI actions.
 
-### Verified transport checkpoint
+### Verified transport
 
-`logic_play` and `logic_stop` are public by default. Results include the
-requested state, whether a MIDI command was dispatched, the observed transport
-state, reliability, and Mackie feedback evidence. `logic://transport/state`
-reports playback plus observed cycle and record-button readiness.
+`logic_play`, `logic_stop`, and `logic_move_playhead` are public by default.
+Results include the requested state, whether a MIDI command was dispatched, the
+observed transport state, reliability, and Mackie feedback evidence.
+`logic://transport/state` reports playback plus observed cycle and record-button
+readiness. Location results carry coherent initial and final Mackie position
+frames, but no general exact-restoration strategy exists yet.
 
 ## Verified local environment
 
@@ -134,9 +132,10 @@ reports playback plus observed cycle and record-button readiness.
 - Designated requirement: certificate-backed, not code-hash-backed
 
 No Logic project edit or save has occurred. Ticket 0009 acceptance performed
-only reversible transport playback and restored the original stopped state.
+only transport movement. The failed location acceptance recovered to project
+start but could not restore its arbitrary initial display exactly.
 
-## Final passing gates
+## Validation
 
 Run from the repository root:
 
@@ -148,41 +147,34 @@ npm run test:package
 npm run test:integration
 ```
 
-The final run passed:
+The latest non-UI gates passed:
 
-- 7 JSON Schema contract tests
+- 8 JSON Schema contract tests
 - 3 MCP client tests
-- 31 discovered Swift tests, with 3 real-Logic-only cases skipped in the
+- 35 discovered Swift tests, with 3 real-Logic-only cases skipped in the
   ordinary native suite
 - certificate-backed package identity test
-- packaged, full-stack real-Logic integration tests covering Doctor, default
+- prior packaged, full-stack real-Logic integration tests covered Doctor, default
   diagnostic denial, diagnostic opt-in, bounded AX inspection, MIDI endpoint
   readiness, exact Mackie assignment, inbound Mackie feedback, focus loss,
   emergency stop, focus-independent play/stop, transport state, and restoration
 
 `npm run test:integration` sets `LOGIC_INTEGRATION_TEST=1` and exercises the
-running Logic installation through the packaged Companion.
+running Logic installation through the packaged Companion. Its latest rerun is
+blocked by Logic's visible “use John’s AirPods Pro?” modal; no audio-device
+choice was made. Dismiss that modal and keep Control Surface Setup visible before
+rerunning. Exact location restoration is separately opt-in with
+`LOGIC_LOCATION_INTEGRATION_TEST=1` and currently fails from arbitrary positions
+as documented above.
 
 ## Next work
 
 Continue [`0009 — Verified transport`](docs/tickets/0009-verified-transport.md).
+The next slice needs an absolute supported locate target or another restoration
+mechanism that does not assume equal and opposite jog messages are symmetric.
 
-The next red→green slice is deterministic location navigation. A real-Logic
-acceptance attempt proved that waiting 300 ms after the latest display update
-does not establish a coherent or restorable position. Logic sends one initial
-full display sweep (`0x49` through `0x40`) followed by sparse controller updates.
-In one captured inverse-jog sequence, the display moved
-`0010101006 → 0010101001 → 0020101001`; equal and opposite jog messages did not
-restore the exact initial display. The temporary delay heuristic, debug logging,
-and failing acceptance block were removed.
-
-Before exposing location as verified deterministic, establish a protocol-grounded
-postcondition and a restoration mechanism that passes an exact real-Logic check.
-The existing public operation currently accepts any newer lexicographically
-directional display and is therefore experimental.
-
-Ticket 0010 (Test Project lifecycle) will supply the policy context that enables
-Test Mode activation.
+Ticket 0010 (Test Project lifecycle) will supply the verified policy context
+that enables Test Mode activation after transport is complete.
 
 ## Important implementation facts
 
@@ -205,6 +197,9 @@ Test Mode activation.
 - `MackieTransportController` owns transport dispatch and verification. Never
   treat a successful `send` as operation success; only a matching newer
   `MackieControlFeedbackMonitor` observation verifies a transition.
+- Position display frames begin at controller `0x49`, descend to `0x40`, and may
+  omit unchanged digits. Commit only a bounded descending frame; isolated sparse
+  updates remain uncommitted.
 - `MacMackieControlObserver` is a specialized read-only observer. Its Setup
   window must remain visible when Doctor or real acceptance tests classify the
   assignment.

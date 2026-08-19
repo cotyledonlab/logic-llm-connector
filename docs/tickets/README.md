@@ -35,3 +35,5 @@ passes and the result is committed and pushed.
 - `d0143b3`, `b17666b`, `ca0bb09`, and `07d51a7` → ticket 0007
 - `cfbd6bc`, `1020ec6`, `5bd4749`, `4ce72d7`, `bc06cd9`, and `0ff2a21` → ticket 0008
 - `d886546`, `4805724`, and `6a4a495` → ticket 0009 play/stop checkpoint
+- `8b146e3`, `e9258f4`, `dfddb3a`, `85a4a2e`, `3ae6a02`, and `2e11de0`
+  → ticket 0009 location investigation

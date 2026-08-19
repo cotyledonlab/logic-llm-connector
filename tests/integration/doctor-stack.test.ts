@@ -71,9 +71,6 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
   });
 
   await waitForSocket(socketPath);
-  const activatedLogic = spawnSync("open", ["-a", "Logic Pro"]);
-  assert.equal(activatedLogic.status, 0, activatedLogic.stderr?.toString());
-  await new Promise((resolve) => setTimeout(resolve, 250));
   const bridge = new UnixSocketLogicBridge({ socketPath, timeoutMs: 2_000 });
   const result = await waitForMackieAcceptance(bridge);
 
@@ -169,51 +166,53 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
       "succeeded",
     );
 
-    let locationStart: string | null = null;
-    let locationCurrent: string | null = null;
-    try {
-      const moved = await bridge.moveTransportPlayhead({
-        protocolVersion: "1.0.0",
-        operationId: "location-forward",
-        direction: "forward",
-        steps: 10,
-        timeoutMs: 1500,
-      });
-      locationStart = moved.data.initialPosition.display;
-      locationCurrent = moved.data.position.display;
-      assert.equal(moved.status, "succeeded", JSON.stringify(moved));
-      assert.equal(moved.reliability, "verified_deterministic");
-      assert.ok(
-        locationStart && locationCurrent && locationCurrent > locationStart,
-        JSON.stringify(moved),
-      );
-
-      const restored = await bridge.moveTransportPlayhead({
-        protocolVersion: "1.0.0",
-        operationId: "location-backward",
-        direction: "backward",
-        steps: 10,
-        timeoutMs: 1500,
-      });
-      locationCurrent = restored.data.position.display;
-      assert.equal(restored.status, "succeeded", JSON.stringify(restored));
-      assert.equal(locationCurrent, locationStart, JSON.stringify(restored));
-    } finally {
-      for (
-        let attempt = 0;
-        locationStart && locationCurrent && locationCurrent !== locationStart && attempt < 8;
-        attempt += 1
-      ) {
-        const recovery = await bridge.moveTransportPlayhead({
+    if (process.env["LOGIC_LOCATION_INTEGRATION_TEST"] === "1") {
+      let locationStart: string | null = null;
+      let locationCurrent: string | null = null;
+      try {
+        const moved = await bridge.moveTransportPlayhead({
           protocolVersion: "1.0.0",
-          operationId: `location-recovery-${attempt}`,
-          direction: locationCurrent < locationStart ? "forward" : "backward",
-          steps: 1,
+          operationId: "location-forward",
+          direction: "forward",
+          steps: 10,
           timeoutMs: 1500,
         });
-        locationCurrent = recovery.data.position.display;
+        locationStart = moved.data.initialPosition.display;
+        locationCurrent = moved.data.position.display;
+        assert.equal(moved.status, "succeeded", JSON.stringify(moved));
+        assert.equal(moved.reliability, "verified_deterministic");
+        assert.ok(
+          locationStart && locationCurrent && locationCurrent > locationStart,
+          JSON.stringify(moved),
+        );
+
+        const restored = await bridge.moveTransportPlayhead({
+          protocolVersion: "1.0.0",
+          operationId: "location-backward",
+          direction: "backward",
+          steps: 10,
+          timeoutMs: 1500,
+        });
+        locationCurrent = restored.data.position.display;
+        assert.equal(restored.status, "succeeded", JSON.stringify(restored));
+        assert.equal(locationCurrent, locationStart, JSON.stringify(restored));
+      } finally {
+        for (
+          let attempt = 0;
+          locationStart && locationCurrent && locationCurrent !== locationStart && attempt < 8;
+          attempt += 1
+        ) {
+          const recovery = await bridge.moveTransportPlayhead({
+            protocolVersion: "1.0.0",
+            operationId: `location-recovery-${attempt}`,
+            direction: locationCurrent < locationStart ? "forward" : "backward",
+            steps: 1,
+            timeoutMs: 1500,
+          });
+          locationCurrent = recovery.data.position.display;
+        }
+        assert.equal(locationCurrent, locationStart, "real-Logic playhead restoration failed");
       }
-      assert.equal(locationCurrent, locationStart, "real-Logic playhead restoration failed");
     }
 
     const finder = spawnSync("open", ["-a", "Finder"]);

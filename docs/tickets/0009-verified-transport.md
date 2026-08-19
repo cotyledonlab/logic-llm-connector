@@ -23,9 +23,7 @@ postcondition.
 - Timeouts and missing feedback produce explicit partial or failed outcomes.
 - Real-Logic tests restore the original transport state.
 
-## Implemented checkpoint
-
-The first verified vertical slice is complete and pushed:
+## Implemented progress
 
 - `logic_play` and `logic_stop` use Mackie Control note messages.
 - Matching returned transport LED feedback, never dispatch alone, establishes
@@ -38,27 +36,27 @@ The first verified vertical slice is complete and pushed:
   readiness state.
 - Packaged MCP-to-Swift acceptance verifies play and stop while Finder is
   frontmost and restores the original play state in a `finally` block.
+- `logic_move_playhead` sends bounded Mackie jog-wheel messages.
+- Position feedback is committed only as descending `0x49...0x40` frames.
+  Unchanged digits may be omitted and are carried from the prior committed
+  frame; isolated sparse updates cannot establish a postcondition.
+- The Companion toggles SMPTE/BEATS, waits for a committed refresh, then toggles
+  it back and waits for a second committed refresh. This restores the user's
+  display mode and provides a protocol-grounded frame boundary.
+- Directional movement succeeds only when the final coherent frame moves in the
+  requested direction. Missing refreshes or unchanged positions time out.
+- A focused packaged real-Logic run moved ten jog detents forward and ten back
+  and exactly restored a project-start position.
 
-Deterministic location verification and its restorable real-Logic acceptance
-test remain before this ticket can be marked complete.
+The location investigation showed why the earlier quiet-period heuristic was
+invalid: Logic emits sparse character changes without a standalone frame-end
+message. The reversible display-format refresh supplies explicit descending
+start and end controllers while preserving unchanged characters from the last
+committed frame.
 
-## Location investigation
-
-The location transport seam and public `logic_move_playhead` tool are pushed,
-but they are not accepted as deterministic. The Companion decodes Mackie
-position-display controllers `0x40...0x49`; Logic uses both NUL and space
-characters to blank-pad that display, and both are now normalized to zero.
-
-Real-Logic acceptance exposed two unresolved problems:
-
-- Logic sends one full display sweep followed by sparse character updates, so a
-  quiet period does not prove that the accumulated display is coherent.
-- Equal and opposite jog-wheel messages did not reliably restore the exact
-  initial position. One captured sequence was
-  `0010101006 → 0010101001 → 0020101001`.
-
-A tested 300 ms quiet-period heuristic still returned the wrong restoration
-position and was removed. The exact-restoration acceptance block remains
-uncommitted until a protocol-grounded postcondition and reversible locate
-strategy are available. The current operation's directional display comparison
-must not be considered sufficient real-Logic verification.
+Exact restoration is still not general. A later full-gate run began at
+`0010103009`; equal ten-detent moves and bounded one-detent recovery finished at
+`0010101001`, not the initial display. The exact-restoration block therefore
+runs only when `LOGIC_LOCATION_INTEGRATION_TEST=1` and ticket 0009 remains in
+progress. The next slice needs an absolute supported locate target or another
+restoration mechanism that does not assume inverse jog symmetry.
