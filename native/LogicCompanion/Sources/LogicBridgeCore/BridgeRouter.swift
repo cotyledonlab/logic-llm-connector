@@ -6,6 +6,7 @@ public enum BridgeRouterError: Error, Equatable {
     case unsupportedMethod(String)
     case diagnosticsDisabled
     case transportUnavailable
+    case projectLifecycleUnavailable
 }
 
 public enum JSONRPCID: Codable, Sendable, Equatable {
@@ -146,6 +147,46 @@ private struct TransportLocateRequest: Codable {
     let params: TransportLocateParameters
 }
 
+private struct ProjectOpenParameters: Codable {
+    let protocolVersion: String
+    let operationID: String
+    let fixturePath: String
+    let timeoutMs: Int
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion
+        case operationID = "operationId"
+        case fixturePath
+        case timeoutMs
+    }
+}
+
+private struct ProjectOpenRequest: Codable {
+    let jsonrpc: String
+    let id: JSONRPCID
+    let method: String
+    let params: ProjectOpenParameters
+}
+
+private struct ProjectMutationParameters: Codable {
+    let protocolVersion: String
+    let operationID: String
+    let timeoutMs: Int
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion
+        case operationID = "operationId"
+        case timeoutMs
+    }
+}
+
+private struct ProjectMutationRequest: Codable {
+    let jsonrpc: String
+    let id: JSONRPCID
+    let method: String
+    let params: ProjectMutationParameters
+}
+
 private struct JSONRPCResponse<Result: Codable>: Codable {
     let jsonrpc: String
     let id: JSONRPCID
@@ -157,6 +198,7 @@ public struct BridgeRouter: Sendable {
     private let axSnapshotter: any LogicAXSnapshotting
     private let diagnosticsEnabled: Bool
     private let transport: (any TransportControlling)?
+    private let projectLifecycle: (any ProjectLifecycleControlling)?
     private let now: @Sendable () -> Date
 
     public init(
@@ -164,12 +206,14 @@ public struct BridgeRouter: Sendable {
         axSnapshotter: any LogicAXSnapshotting = MacLogicAXSnapshotter(),
         diagnosticsEnabled: Bool = false,
         transport: (any TransportControlling)? = nil,
+        projectLifecycle: (any ProjectLifecycleControlling)? = nil,
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.doctor = doctor
         self.axSnapshotter = axSnapshotter
         self.diagnosticsEnabled = diagnosticsEnabled
         self.transport = transport
+        self.projectLifecycle = projectLifecycle
         self.now = now
     }
 
@@ -192,9 +236,70 @@ public struct BridgeRouter: Sendable {
             return try routeTransportMovePlayhead(data)
         case "logic.transport.locate":
             return try routeTransportLocate(data)
+        case "logic.project.state":
+            return try routeProjectState(data)
+        case "logic.project.openFixture":
+            return try routeProjectOpen(data)
+        case "logic.project.save", "logic.project.close", "logic.project.reopen", "logic.project.cleanup":
+            return try routeProjectMutation(data, method: envelope.method)
         default:
             throw BridgeRouterError.unsupportedMethod(envelope.method)
         }
+    }
+
+    private func routeProjectState(_ data: Data) throws -> Data {
+        guard let projectLifecycle else { throw BridgeRouterError.projectLifecycleUnavailable }
+        let request = try JSONDecoder().decode(TransportStateRequest.self, from: data)
+        try validateProtocolVersion(request.params.protocolVersion)
+        return try JSONEncoder.bridge.encode(JSONRPCResponse(
+            jsonrpc: "2.0",
+            id: request.id,
+            result: projectLifecycle.observe(operationID: request.params.operationID)
+        ))
+    }
+
+    private func routeProjectOpen(_ data: Data) throws -> Data {
+        guard let projectLifecycle else { throw BridgeRouterError.projectLifecycleUnavailable }
+        let request = try JSONDecoder().decode(ProjectOpenRequest.self, from: data)
+        try validateProtocolVersion(request.params.protocolVersion)
+        return try JSONEncoder.bridge.encode(JSONRPCResponse(
+            jsonrpc: "2.0",
+            id: request.id,
+            result: projectLifecycle.openFixture(
+                at: request.params.fixturePath,
+                operationID: request.params.operationID,
+                timeoutMilliseconds: request.params.timeoutMs
+            )
+        ))
+    }
+
+    private func routeProjectMutation(_ data: Data, method: String) throws -> Data {
+        guard let projectLifecycle else { throw BridgeRouterError.projectLifecycleUnavailable }
+        let request = try JSONDecoder().decode(ProjectMutationRequest.self, from: data)
+        try validateProtocolVersion(request.params.protocolVersion)
+        let result = switch method {
+        case "logic.project.save": projectLifecycle.save(
+            operationID: request.params.operationID,
+            timeoutMilliseconds: request.params.timeoutMs
+        )
+        case "logic.project.close": projectLifecycle.close(
+            operationID: request.params.operationID,
+            timeoutMilliseconds: request.params.timeoutMs
+        )
+        case "logic.project.reopen": projectLifecycle.reopen(
+            operationID: request.params.operationID,
+            timeoutMilliseconds: request.params.timeoutMs
+        )
+        default: projectLifecycle.cleanup(
+            operationID: request.params.operationID,
+            timeoutMilliseconds: request.params.timeoutMs
+        )
+        }
+        return try JSONEncoder.bridge.encode(JSONRPCResponse(
+            jsonrpc: "2.0",
+            id: request.id,
+            result: result
+        ))
     }
 
     private func routeTransportState(_ data: Data) throws -> Data {

@@ -8,6 +8,7 @@ import type {
   TransportLocationOperationResult,
   TransportLocateOperationResult,
   TransportStateResult,
+  ProjectLifecycleResult,
 } from "./server.js";
 
 export interface UnixSocketLogicBridgeOptions {
@@ -73,6 +74,54 @@ export class UnixSocketLogicBridge implements LogicBridge {
     timeoutMs: number;
   }): Promise<TransportLocateOperationResult> {
     return this.#request("logic.transport.locate", request);
+  }
+
+  projectState(request: {
+    protocolVersion: "1.0.0";
+    operationId: string;
+  }): Promise<ProjectLifecycleResult> {
+    return this.#request("logic.project.state", request);
+  }
+
+  openTestProject(request: {
+    protocolVersion: "1.0.0";
+    operationId: string;
+    fixturePath: string;
+    timeoutMs: number;
+  }): Promise<ProjectLifecycleResult> {
+    return this.#request("logic.project.openFixture", request);
+  }
+
+  saveTestProject(request: {
+    protocolVersion: "1.0.0";
+    operationId: string;
+    timeoutMs: number;
+  }): Promise<ProjectLifecycleResult> {
+    return this.#request("logic.project.save", request);
+  }
+
+  closeTestProject(request: {
+    protocolVersion: "1.0.0";
+    operationId: string;
+    timeoutMs: number;
+  }): Promise<ProjectLifecycleResult> {
+    return this.#request("logic.project.close", request);
+  }
+
+  reopenTestProject(request: {
+    protocolVersion: "1.0.0";
+    operationId: string;
+    timeoutMs: number;
+  }): Promise<ProjectLifecycleResult> {
+    return this.#request("logic.project.reopen", request);
+  }
+
+  cleanupTestProject(request: {
+    protocolVersion: "1.0.0";
+    operationId: string;
+    timeoutMs: number;
+  }): Promise<ProjectLifecycleResult> {
+    return this.#request("logic.project.cleanup", request);
   }
 
   #request<Result>(method: string, params: object): Promise<Result> {

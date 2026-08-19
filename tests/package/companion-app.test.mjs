@@ -27,6 +27,13 @@ test("companion is a signed macOS app with a stable identity", async () => {
     appPath,
   ]);
   const requirement = `${requirementOutput}${requirementError}`;
+  const { stdout: entitlementOutput, stderr: entitlementError } = await execFileAsync("codesign", [
+    "-d",
+    "--entitlements",
+    ":-",
+    appPath,
+  ]);
+  const entitlements = `${entitlementOutput}${entitlementError}`;
 
   assert.equal(identifier.trim(), "dev.cotyledonlab.logic-llm-connector.companion");
   assert.match(signature, /Identifier=dev\.cotyledonlab\.logic-llm-connector\.companion/);
@@ -34,4 +41,5 @@ test("companion is a signed macOS app with a stable identity", async () => {
   assert.match(signature, /TeamIdentifier=4N63MQVR2B/);
   assert.match(requirement, /anchor apple generic/);
   assert.doesNotMatch(requirement, /designated => cdhash/);
+  assert.match(entitlements, /com\.apple\.security\.automation\.apple-events/);
 });

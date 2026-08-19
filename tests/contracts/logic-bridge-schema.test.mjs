@@ -311,3 +311,66 @@ test("absolute transport locate is bounded to a supported target", async () => {
   request.params.target = "left_locator";
   assert.equal(validateRequest(request), false);
 });
+
+test("test project lifecycle requests and identity-bearing results are versioned", async () => {
+  const validateRequest = await validatorFor("request");
+  const validateResponse = await validatorFor("response");
+  const base = {
+    jsonrpc: "2.0",
+    id: "project-1",
+    params: { protocolVersion: "1.0.0", operationId: "project-1", timeoutMs: 5000 }
+  };
+  const requests = [
+    {
+      ...base,
+      method: "logic.project.openFixture",
+      params: { ...base.params, fixturePath: "/fixtures/Test.logicx" }
+    },
+    { ...base, method: "logic.project.save" },
+    { ...base, method: "logic.project.close" },
+    { ...base, method: "logic.project.reopen" },
+    { ...base, method: "logic.project.cleanup" },
+    {
+      ...base,
+      method: "logic.project.state",
+      params: { protocolVersion: "1.0.0", operationId: "project-1" }
+    }
+  ];
+  for (const request of requests) {
+    assert.equal(validateRequest(request), true, JSON.stringify(validateRequest.errors));
+  }
+
+  const response = {
+    jsonrpc: "2.0",
+    id: "project-1",
+    result: {
+      protocolVersion: "1.0.0",
+      operationId: "project-1",
+      status: "succeeded",
+      reliability: "verified_deterministic",
+      startedAt: "2026-08-19T10:00:00Z",
+      finishedAt: "2026-08-19T10:00:01Z",
+      data: {
+        action: "open",
+        commandDispatched: true,
+        project: {
+          name: "Test",
+          path: "/managed/copy-1/Test.logicx",
+          modified: false,
+          observedAt: "2026-08-19T10:00:01Z"
+        },
+        managedProjectPath: "/managed/copy-1/Test.logicx",
+        policyContext: true,
+        cleanupPerformed: false
+      },
+      evidence: [{
+        source: "Logic Apple Events document observation",
+        observedAt: "2026-08-19T10:00:01Z",
+        value: { path: "/managed/copy-1/Test.logicx" }
+      }]
+    }
+  };
+  assert.equal(validateResponse(response), true, JSON.stringify(validateResponse.errors));
+  response.result.data.project.path = "";
+  assert.equal(validateResponse(response), false);
+});

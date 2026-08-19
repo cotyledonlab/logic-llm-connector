@@ -114,6 +114,39 @@ export interface TransportLocateOperationResult extends Omit<TransportStateResul
   };
 }
 
+export interface ProjectIdentity {
+  name: string;
+  path: string;
+  modified: boolean;
+  observedAt: string;
+}
+
+export type ProjectLifecycleAction = "observe" | "open" | "save" | "close" | "reopen" | "cleanup";
+export type ProjectLifecycleFailure =
+  | "fixture_not_found"
+  | "invalid_fixture"
+  | "user_project_open"
+  | "no_managed_project"
+  | "project_identity_changed"
+  | "unsaved_changes"
+  | "dialog_presented"
+  | "automation_denied"
+  | "command_failed"
+  | "postcondition_failed"
+  | "cleanup_failed";
+
+export interface ProjectLifecycleResult extends Omit<TransportStateResult, "data"> {
+  data: {
+    action: ProjectLifecycleAction;
+    commandDispatched: boolean;
+    project?: ProjectIdentity;
+    managedProjectPath?: string;
+    policyContext: boolean;
+    cleanupPerformed: boolean;
+    failure?: ProjectLifecycleFailure;
+  };
+}
+
 export interface LogicBridge {
   doctor(request: {
     protocolVersion: typeof BRIDGE_PROTOCOL_VERSION;
@@ -148,6 +181,36 @@ export interface LogicBridge {
     target: "project_start";
     timeoutMs: number;
   }): Promise<TransportLocateOperationResult>;
+  projectState(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION;
+    operationId: string;
+  }): Promise<ProjectLifecycleResult>;
+  openTestProject(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION;
+    operationId: string;
+    fixturePath: string;
+    timeoutMs: number;
+  }): Promise<ProjectLifecycleResult>;
+  saveTestProject(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION;
+    operationId: string;
+    timeoutMs: number;
+  }): Promise<ProjectLifecycleResult>;
+  closeTestProject(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION;
+    operationId: string;
+    timeoutMs: number;
+  }): Promise<ProjectLifecycleResult>;
+  reopenTestProject(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION;
+    operationId: string;
+    timeoutMs: number;
+  }): Promise<ProjectLifecycleResult>;
+  cleanupTestProject(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION;
+    operationId: string;
+    timeoutMs: number;
+  }): Promise<ProjectLifecycleResult>;
 }
 
 export interface LogicMcpServerDependencies {
@@ -273,6 +336,46 @@ const transportLocateOutputSchema = z.object({
   commandDispatched: z.boolean(),
   initialPosition: transportPositionSchema,
   position: transportPositionSchema,
+  evidence: z.array(evidenceSchema),
+});
+
+const projectIdentitySchema = z.object({
+  name: z.string().min(1),
+  path: z.string().min(1),
+  modified: z.boolean(),
+  observedAt: z.iso.datetime(),
+});
+
+const projectFailureSchema = z.enum([
+  "fixture_not_found",
+  "invalid_fixture",
+  "user_project_open",
+  "no_managed_project",
+  "project_identity_changed",
+  "unsaved_changes",
+  "dialog_presented",
+  "automation_denied",
+  "command_failed",
+  "postcondition_failed",
+  "cleanup_failed",
+]);
+
+const projectOutputSchema = z.object({
+  operationId: z.string(),
+  status: z.enum(["succeeded", "partial", "failed", "cancelled", "timed_out"]),
+  reliability: z.enum([
+    "verified_deterministic",
+    "verified_ui_driven",
+    "best_effort",
+    "unsupported",
+  ]),
+  action: z.enum(["observe", "open", "save", "close", "reopen", "cleanup"]),
+  commandDispatched: z.boolean(),
+  project: projectIdentitySchema.optional(),
+  managedProjectPath: z.string().min(1).optional(),
+  policyContext: z.boolean(),
+  cleanupPerformed: z.boolean(),
+  failure: projectFailureSchema.optional(),
   evidence: z.array(evidenceSchema),
 });
 
@@ -466,6 +569,149 @@ export function createLogicMcpServer({
     },
   );
 
+  const projectResponse = (result: ProjectLifecycleResult) => {
+    const structuredContent = {
+      operationId: result.operationId,
+      status: result.status,
+      reliability: result.reliability,
+      ...result.data,
+      evidence: result.evidence,
+    };
+    const identity = result.data.project?.path ?? result.data.managedProjectPath ?? "no project";
+    const detail = result.data.failure ? `: ${result.data.failure}` : "";
+    return {
+      content: [{
+        type: "text" as const,
+        text: `Logic Test Project ${result.data.action} ${result.status}${detail} (${identity}).`,
+      }],
+      structuredContent,
+    };
+  };
+
+  server.registerTool(
+    "logic_open_test_project",
+    {
+      title: "Open a copied Logic Test Project",
+      description:
+        "Copy a .logicx fixture into the connector's dedicated test directory, open only that copy, and verify its document identity.",
+      inputSchema: z.object({
+        fixturePath: z.string().min(1),
+        timeoutMs: z.number().int().min(100).max(30_000).default(15_000),
+      }),
+      outputSchema: projectOutputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ fixturePath, timeoutMs }) => projectResponse(await bridge.openTestProject({
+      protocolVersion: BRIDGE_PROTOCOL_VERSION,
+      operationId: createOperationId(),
+      fixturePath,
+      timeoutMs,
+    })),
+  );
+
+  server.registerTool(
+    "logic_save_test_project",
+    {
+      title: "Save the active Logic Test Project",
+      description:
+        "Save only the verified managed Test Project and verify the same document is no longer modified. Requires explicit confirmation.",
+      inputSchema: z.object({
+        confirm: z.literal(true),
+        timeoutMs: z.number().int().min(100).max(30_000).default(15_000),
+      }),
+      outputSchema: projectOutputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ timeoutMs }) => projectResponse(await bridge.saveTestProject({
+      protocolVersion: BRIDGE_PROTOCOL_VERSION,
+      operationId: createOperationId(),
+      timeoutMs,
+    })),
+  );
+
+  server.registerTool(
+    "logic_close_test_project",
+    {
+      title: "Close the active Logic Test Project",
+      description:
+        "Close only the verified managed Test Project after rejecting unsaved changes, then verify that no Logic document remains open.",
+      inputSchema: z.object({
+        timeoutMs: z.number().int().min(100).max(30_000).default(15_000),
+      }),
+      outputSchema: projectOutputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ timeoutMs }) => projectResponse(await bridge.closeTestProject({
+      protocolVersion: BRIDGE_PROTOCOL_VERSION,
+      operationId: createOperationId(),
+      timeoutMs,
+    })),
+  );
+
+  server.registerTool(
+    "logic_reopen_test_project",
+    {
+      title: "Reopen the managed Logic Test Project",
+      description:
+        "Reopen the last managed Test Project only when no Logic document is open and verify its document identity.",
+      inputSchema: z.object({
+        timeoutMs: z.number().int().min(100).max(30_000).default(15_000),
+      }),
+      outputSchema: projectOutputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ timeoutMs }) => projectResponse(await bridge.reopenTestProject({
+      protocolVersion: BRIDGE_PROTOCOL_VERSION,
+      operationId: createOperationId(),
+      timeoutMs,
+    })),
+  );
+
+  server.registerTool(
+    "logic_cleanup_test_project",
+    {
+      title: "Clean up the managed Logic Test Project",
+      description:
+        "Close the verified managed Test Project without saving and delete only its connector-owned copied workspace. Requires explicit confirmation.",
+      inputSchema: z.object({
+        confirm: z.literal(true),
+        timeoutMs: z.number().int().min(100).max(30_000).default(15_000),
+      }),
+      outputSchema: projectOutputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ timeoutMs }) => projectResponse(await bridge.cleanupTestProject({
+      protocolVersion: BRIDGE_PROTOCOL_VERSION,
+      operationId: createOperationId(),
+      timeoutMs,
+    })),
+  );
+
   server.registerResource(
     "logic_transport_state",
     "logic://transport/state",
@@ -476,6 +722,35 @@ export function createLogicMcpServer({
     },
     async (uri) => {
       const result = await bridge.transportState({
+        protocolVersion: BRIDGE_PROTOCOL_VERSION,
+        operationId: createOperationId(),
+      });
+      return {
+        contents: [{
+          uri: uri.href,
+          mimeType: "application/json",
+          text: JSON.stringify({
+            operationId: result.operationId,
+            status: result.status,
+            reliability: result.reliability,
+            state: result.data,
+            evidence: result.evidence,
+          }),
+        }],
+      };
+    },
+  );
+
+  server.registerResource(
+    "logic_project_state",
+    "logic://project/state",
+    {
+      title: "Logic project state",
+      description: "Observed front-document identity and verified Test Project policy context.",
+      mimeType: "application/json",
+    },
+    async (uri) => {
+      const result = await bridge.projectState({
         protocolVersion: BRIDGE_PROTOCOL_VERSION,
         operationId: createOperationId(),
       });

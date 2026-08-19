@@ -9,9 +9,27 @@ import {
   type LogicBridge,
 } from "../../packages/mcp-server/src/server.js";
 
+const unusedProjectBridge = {
+  async projectState() { throw new Error("project lifecycle is not used in this test"); },
+  async openTestProject() { throw new Error("project lifecycle is not used in this test"); },
+  async saveTestProject() { throw new Error("project lifecycle is not used in this test"); },
+  async closeTestProject() { throw new Error("project lifecycle is not used in this test"); },
+  async reopenTestProject() { throw new Error("project lifecycle is not used in this test"); },
+  async cleanupTestProject() { throw new Error("project lifecycle is not used in this test"); },
+} satisfies Pick<
+  LogicBridge,
+  | "projectState"
+  | "openTestProject"
+  | "saveTestProject"
+  | "closeTestProject"
+  | "reopenTestProject"
+  | "cleanupTestProject"
+>;
+
 test("an MCP client can diagnose Logic readiness", async (t) => {
   const calls: unknown[] = [];
   const bridge: LogicBridge = {
+    ...unusedProjectBridge,
     async doctor(request) {
       calls.push(request);
       const timestamp = "2026-08-18T10:00:00.000Z";
@@ -82,6 +100,11 @@ test("an MCP client can diagnose Logic readiness", async (t) => {
     "logic_stop",
     "logic_move_playhead",
     "logic_locate",
+    "logic_open_test_project",
+    "logic_save_test_project",
+    "logic_close_test_project",
+    "logic_reopen_test_project",
+    "logic_cleanup_test_project",
   ]);
 
   const result = await client.callTool({ name: "logic_doctor", arguments: {} });
@@ -111,6 +134,7 @@ test("an MCP client can diagnose Logic readiness", async (t) => {
 test("UI inspection is absent by default and available only when enabled", async (t) => {
   const calls: unknown[] = [];
   const bridge: LogicBridge = {
+    ...unusedProjectBridge,
     async doctor() {
       throw new Error("doctor is not used in this test");
     },
@@ -179,6 +203,11 @@ test("UI inspection is absent by default and available only when enabled", async
     "logic_stop",
     "logic_move_playhead",
     "logic_locate",
+    "logic_open_test_project",
+    "logic_save_test_project",
+    "logic_close_test_project",
+    "logic_reopen_test_project",
+    "logic_cleanup_test_project",
   ]);
   await disabledClient.close();
   await disabledServer.close();
@@ -203,6 +232,11 @@ test("UI inspection is absent by default and available only when enabled", async
     "logic_stop",
     "logic_move_playhead",
     "logic_locate",
+    "logic_open_test_project",
+    "logic_save_test_project",
+    "logic_close_test_project",
+    "logic_reopen_test_project",
+    "logic_cleanup_test_project",
     "logic_inspect_ui",
   ]);
   const result = await client.callTool({
@@ -245,6 +279,7 @@ test("transport tools and resource preserve verified native outcomes", async (t)
     observedAt: timestamp,
   };
   const bridge: LogicBridge = {
+    ...unusedProjectBridge,
     async doctor() { throw new Error("unused"); },
     async inspectUI() { throw new Error("unused"); },
     async transportState(request) {
@@ -413,5 +448,117 @@ test("transport tools and resource preserve verified native outcomes", async (t)
       timeoutMs: 750,
     },
     { protocolVersion: "1.0.0", operationId: "transport-4" },
+  ]);
+});
+
+test("project tools preserve copied-project identity, confirmation, and cleanup evidence", async (t) => {
+  const calls: Array<{ method: string; request: unknown }> = [];
+  const timestamp = "2026-08-19T10:00:00.000Z";
+  const project = {
+    name: "Fixture",
+    path: "/managed/copy-1/Fixture.logicx",
+    modified: false,
+    observedAt: timestamp,
+  };
+  const makeResult = (
+    operationId: string,
+    action: "observe" | "open" | "save" | "close" | "reopen" | "cleanup",
+  ) => ({
+    protocolVersion: "1.0.0" as const,
+    operationId,
+    status: "succeeded" as const,
+    reliability: "verified_deterministic" as const,
+    startedAt: timestamp,
+    finishedAt: timestamp,
+    data: {
+      action,
+      commandDispatched: action !== "observe",
+      ...(action === "close" || action === "cleanup" ? {} : { project }),
+      ...(action === "cleanup" ? {} : { managedProjectPath: project.path }),
+      policyContext: !["close", "cleanup"].includes(action),
+      cleanupPerformed: action === "cleanup",
+    },
+    evidence: [{
+      source: "Logic Apple Events document observation",
+      observedAt: timestamp,
+      value: { path: project.path },
+    }],
+  });
+  const bridge: LogicBridge = {
+    async doctor() { throw new Error("unused"); },
+    async inspectUI() { throw new Error("unused"); },
+    async transportState() { throw new Error("unused"); },
+    async setTransportPlaying() { throw new Error("unused"); },
+    async moveTransportPlayhead() { throw new Error("unused"); },
+    async locateTransport() { throw new Error("unused"); },
+    async projectState(request) {
+      calls.push({ method: "state", request });
+      return makeResult(request.operationId, "observe");
+    },
+    async openTestProject(request) {
+      calls.push({ method: "open", request });
+      return makeResult(request.operationId, "open");
+    },
+    async saveTestProject(request) {
+      calls.push({ method: "save", request });
+      return makeResult(request.operationId, "save");
+    },
+    async closeTestProject(request) {
+      calls.push({ method: "close", request });
+      return makeResult(request.operationId, "close");
+    },
+    async reopenTestProject(request) {
+      calls.push({ method: "reopen", request });
+      return makeResult(request.operationId, "reopen");
+    },
+    async cleanupTestProject(request) {
+      calls.push({ method: "cleanup", request });
+      return makeResult(request.operationId, "cleanup");
+    },
+  };
+  let operation = 0;
+  const server = createLogicMcpServer({
+    bridge,
+    createOperationId: () => `project-${++operation}`,
+  });
+  const client = new Client({ name: "project-client", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  t.after(async () => { await client.close(); await server.close(); });
+
+  const opened = await client.callTool({
+    name: "logic_open_test_project",
+    arguments: { fixturePath: "/fixtures/Fixture.logicx", timeoutMs: 5000 },
+  });
+  assert.equal(opened.isError, undefined);
+  assert.equal((opened.structuredContent as Record<string, unknown>)["policyContext"], true);
+
+  const deniedSave = await client.callTool({
+    name: "logic_save_test_project",
+    arguments: { timeoutMs: 5000 },
+  });
+  assert.equal(deniedSave.isError, true);
+
+  const saved = await client.callTool({
+    name: "logic_save_test_project",
+    arguments: { confirm: true, timeoutMs: 5000 },
+  });
+  assert.equal(saved.isError, undefined);
+
+  await client.callTool({ name: "logic_close_test_project", arguments: { timeoutMs: 5000 } });
+  await client.callTool({ name: "logic_reopen_test_project", arguments: { timeoutMs: 5000 } });
+  const cleaned = await client.callTool({
+    name: "logic_cleanup_test_project",
+    arguments: { confirm: true, timeoutMs: 5000 },
+  });
+  assert.equal((cleaned.structuredContent as Record<string, unknown>)["cleanupPerformed"], true);
+
+  const resource = await client.readResource({ uri: "logic://project/state" });
+  const content = resource.contents[0];
+  assert.ok(content && "text" in content);
+  assert.equal(JSON.parse(content.text).state.project.path, project.path);
+  assert.deepEqual(calls.map(({ method }) => method), [
+    "open", "save", "close", "reopen", "cleanup", "state",
   ]);
 });

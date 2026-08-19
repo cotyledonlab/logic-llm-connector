@@ -188,6 +188,45 @@
       },
       "additionalProperties": false
     },
+    "projectIdentity": {
+      "type": "object",
+      "required": ["name", "path", "modified", "observedAt"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "modified": { "type": "boolean" },
+        "observedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "projectLifecycleData": {
+      "type": "object",
+      "required": ["action", "commandDispatched", "policyContext", "cleanupPerformed"],
+      "properties": {
+        "action": { "enum": ["observe", "open", "save", "close", "reopen", "cleanup"] },
+        "commandDispatched": { "type": "boolean" },
+        "project": { "$ref": "#/$defs/projectIdentity" },
+        "managedProjectPath": { "type": "string", "minLength": 1 },
+        "policyContext": { "type": "boolean" },
+        "cleanupPerformed": { "type": "boolean" },
+        "failure": {
+          "enum": [
+            "fixture_not_found",
+            "invalid_fixture",
+            "user_project_open",
+            "no_managed_project",
+            "project_identity_changed",
+            "unsaved_changes",
+            "dialog_presented",
+            "automation_denied",
+            "command_failed",
+            "postcondition_failed",
+            "cleanup_failed"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "operationResult": {
       "type": "object",
       "required": [
@@ -223,7 +262,8 @@
             { "$ref": "#/$defs/transportStateData" },
             { "$ref": "#/$defs/transportOperationData" },
             { "$ref": "#/$defs/transportLocationOperationData" },
-            { "$ref": "#/$defs/transportLocateOperationData" }
+            { "$ref": "#/$defs/transportLocateOperationData" },
+            { "$ref": "#/$defs/projectLifecycleData" }
           ]
         },
         "evidence": {
@@ -373,6 +413,68 @@
       },
       "additionalProperties": false
     },
+    "projectStateRequest": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/jsonRpcId" },
+        "method": { "const": "logic.project.state" },
+        "params": {
+          "type": "object",
+          "required": ["protocolVersion", "operationId"],
+          "properties": {
+            "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+            "operationId": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "projectOpenRequest": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/jsonRpcId" },
+        "method": { "const": "logic.project.openFixture" },
+        "params": {
+          "type": "object",
+          "required": ["protocolVersion", "operationId", "fixturePath", "timeoutMs"],
+          "properties": {
+            "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+            "operationId": { "type": "string", "minLength": 1 },
+            "fixturePath": { "type": "string", "minLength": 1 },
+            "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 30000 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "projectMutationRequest": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/jsonRpcId" },
+        "method": {
+          "enum": ["logic.project.save", "logic.project.close", "logic.project.reopen", "logic.project.cleanup"]
+        },
+        "params": {
+          "type": "object",
+          "required": ["protocolVersion", "operationId", "timeoutMs"],
+          "properties": {
+            "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+            "operationId": { "type": "string", "minLength": 1 },
+            "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 30000 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "request": {
       "oneOf": [
         { "$ref": "#/$defs/doctorRequest" },
@@ -380,7 +482,10 @@
         { "$ref": "#/$defs/transportStateRequest" },
         { "$ref": "#/$defs/transportSetPlayingRequest" },
         { "$ref": "#/$defs/transportMovePlayheadRequest" },
-        { "$ref": "#/$defs/transportLocateRequest" }
+        { "$ref": "#/$defs/transportLocateRequest" },
+        { "$ref": "#/$defs/projectStateRequest" },
+        { "$ref": "#/$defs/projectOpenRequest" },
+        { "$ref": "#/$defs/projectMutationRequest" }
       ]
     },
     "response": {

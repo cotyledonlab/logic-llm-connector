@@ -24,6 +24,7 @@ install -m 0644 \
 
 codesign --force --sign "$signing_identity" \
   --identifier dev.cotyledonlab.logic-llm-connector.companion \
+  --entitlements "$package_path/Resources/LogicCompanion.entitlements" \
   --options runtime \
   --timestamp=none \
   "$temporary_app"

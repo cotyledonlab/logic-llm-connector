@@ -267,6 +267,7 @@ private final class CompanionApplicationDelegate: NSObject, NSApplicationDelegat
 
 private let diagnosticsEnabled = ProcessInfo.processInfo.environment["LOGIC_ENABLE_DIAGNOSTICS"] == "1"
 private let mackieFeedback = MackieControlFeedbackMonitor()
+private let projectLifecycle = TestProjectLifecycleController()
 private let midiOwner: VirtualMIDIEndpointOwner = {
     do {
         return try VirtualMIDIEndpointOwner(onReceive: { messages in
@@ -287,7 +288,8 @@ private let router = BridgeRouter(
         mackieFeedback: mackieFeedback
     ),
     diagnosticsEnabled: diagnosticsEnabled,
-    transport: MackieTransportController(midi: midiOwner, feedback: mackieFeedback)
+    transport: MackieTransportController(midi: midiOwner, feedback: mackieFeedback),
+    projectLifecycle: projectLifecycle
 )
 private let application = NSApplication.shared
 private let delegate = CompanionApplicationDelegate(

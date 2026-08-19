@@ -136,6 +136,11 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
     "logic_stop",
     "logic_move_playhead",
     "logic_locate",
+    "logic_open_test_project",
+    "logic_save_test_project",
+    "logic_close_test_project",
+    "logic_reopen_test_project",
+    "logic_cleanup_test_project",
   ]);
   const mcpResult = await client.callTool({ name: "logic_doctor", arguments: {} });
   assert.equal(mcpResult.isError, undefined);
@@ -295,6 +300,11 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
     "logic_stop",
     "logic_move_playhead",
     "logic_locate",
+    "logic_open_test_project",
+    "logic_save_test_project",
+    "logic_close_test_project",
+    "logic_reopen_test_project",
+    "logic_cleanup_test_project",
     "logic_inspect_ui",
   ]);
   const inspection = await diagnosticClient.callTool({

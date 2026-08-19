@@ -165,6 +165,53 @@ private struct FixedTransportController: TransportControlling {
     }
 }
 
+private struct FixedProjectLifecycleController: ProjectLifecycleControlling {
+    let hasVerifiedPolicyContext = true
+
+    func observe(operationID: String) -> ProjectLifecycleResult { make(.observe, operationID) }
+    func openFixture(at path: String, operationID: String, timeoutMilliseconds: Int) -> ProjectLifecycleResult { make(.open, operationID) }
+    func save(operationID: String, timeoutMilliseconds: Int) -> ProjectLifecycleResult { make(.save, operationID) }
+    func close(operationID: String, timeoutMilliseconds: Int) -> ProjectLifecycleResult { make(.close, operationID, project: nil, policyContext: false) }
+    func reopen(operationID: String, timeoutMilliseconds: Int) -> ProjectLifecycleResult { make(.reopen, operationID) }
+    func cleanup(operationID: String, timeoutMilliseconds: Int) -> ProjectLifecycleResult { make(.cleanup, operationID, project: nil, policyContext: false) }
+
+    private func make(
+        _ action: ProjectLifecycleAction,
+        _ operationID: String,
+        project: LogicProjectIdentity? = LogicProjectIdentity(
+            name: "Fixture",
+            path: "/tmp/managed/Fixture.logicx",
+            modified: false,
+            observedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        ),
+        policyContext: Bool = true
+    ) -> ProjectLifecycleResult {
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+        return ProjectLifecycleResult(
+            protocolVersion: bridgeProtocolVersion,
+            operationID: operationID,
+            status: .succeeded,
+            reliability: .verifiedDeterministic,
+            startedAt: timestamp,
+            finishedAt: timestamp,
+            data: ProjectLifecycleData(
+                action: action,
+                commandDispatched: action != .observe,
+                project: project,
+                managedProjectPath: "/tmp/managed/Fixture.logicx",
+                policyContext: policyContext,
+                cleanupPerformed: action == .cleanup,
+                failure: nil
+            ),
+            evidence: [Evidence(
+                source: "Logic Apple Events document observation",
+                observedAt: timestamp,
+                value: .string(action.rawValue)
+            )]
+        )
+    }
+}
+
 @Test("bridge routes a versioned JSON-RPC doctor request")
 func bridgeRoutesDoctorRequest() throws {
     let request = """
@@ -282,4 +329,43 @@ func bridgeRoutesTransportRequests() throws {
     #expect(locateResult["status"] as? String == "succeeded")
     #expect(locateData["requestedTarget"] as? String == "project_start")
     #expect(locatedPosition["display"] as? String == "0000000100")
+}
+
+@Test("bridge routes project lifecycle requests")
+func bridgeRoutesProjectLifecycleRequests() throws {
+    let router = BridgeRouter(
+        doctor: Doctor(system: RouterSystem()),
+        projectLifecycle: FixedProjectLifecycleController()
+    )
+    let requests = [
+        """
+        {"jsonrpc":"2.0","id":"state-1","method":"logic.project.state","params":{"protocolVersion":"1.0.0","operationId":"state-1"}}
+        """,
+        """
+        {"jsonrpc":"2.0","id":"open-1","method":"logic.project.openFixture","params":{"protocolVersion":"1.0.0","operationId":"open-1","fixturePath":"/tmp/Fixture.logicx","timeoutMs":1000}}
+        """,
+        """
+        {"jsonrpc":"2.0","id":"save-1","method":"logic.project.save","params":{"protocolVersion":"1.0.0","operationId":"save-1","timeoutMs":1000}}
+        """,
+        """
+        {"jsonrpc":"2.0","id":"close-1","method":"logic.project.close","params":{"protocolVersion":"1.0.0","operationId":"close-1","timeoutMs":1000}}
+        """,
+        """
+        {"jsonrpc":"2.0","id":"reopen-1","method":"logic.project.reopen","params":{"protocolVersion":"1.0.0","operationId":"reopen-1","timeoutMs":1000}}
+        """,
+        """
+        {"jsonrpc":"2.0","id":"cleanup-1","method":"logic.project.cleanup","params":{"protocolVersion":"1.0.0","operationId":"cleanup-1","timeoutMs":1000}}
+        """,
+    ]
+    let expected = ["observe", "open", "save", "close", "reopen", "cleanup"]
+
+    for (request, action) in zip(requests, expected) {
+        let response = try #require(
+            JSONSerialization.jsonObject(with: router.handle(Data(request.utf8))) as? [String: Any]
+        )
+        let result = try #require(response["result"] as? [String: Any])
+        let data = try #require(result["data"] as? [String: Any])
+        #expect(data["action"] as? String == action)
+        #expect(result["status"] as? String == "succeeded")
+    }
 }
