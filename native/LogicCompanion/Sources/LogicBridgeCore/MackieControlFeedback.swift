@@ -62,6 +62,8 @@ public final class MackieControlFeedbackMonitor: MackieControlFeedbackObserving,
     private var transportObservedAt: Date?
     private var positionSequence: UInt64 = 0
     private var positionDigits = [UInt8?](repeating: nil, count: 10)
+    private var pendingPositionDigits = [UInt8?](repeating: nil, count: 10)
+    private var expectedPositionController: UInt8?
     private var positionObservedAt: Date?
 
     public init(now: @escaping @Sendable () -> Date = Date.init) {
@@ -130,9 +132,36 @@ public final class MackieControlFeedbackMonitor: MackieControlFeedbackObserving,
         let controller = UInt8((word >> 8) & 0x7F)
         guard (0x40...0x49).contains(controller) else { return }
         let value = UInt8(word & 0x7F)
-        positionDigits[Int(controller - 0x40)] = Self.positionDigit(for: value)
-        positionSequence &+= 1
-        positionObservedAt = now()
+        guard let digit = Self.positionDigit(for: value) else {
+            resetPendingPositionSweep()
+            return
+        }
+
+        if controller == 0x49 {
+            pendingPositionDigits = [UInt8?](repeating: nil, count: 10)
+            pendingPositionDigits[9] = digit
+            expectedPositionController = 0x48
+            return
+        }
+
+        guard controller == expectedPositionController else {
+            resetPendingPositionSweep()
+            return
+        }
+        pendingPositionDigits[Int(controller - 0x40)] = digit
+        if controller == 0x40 {
+            positionDigits = pendingPositionDigits
+            positionSequence &+= 1
+            positionObservedAt = now()
+            resetPendingPositionSweep()
+        } else {
+            expectedPositionController = controller - 1
+        }
+    }
+
+    private func resetPendingPositionSweep() {
+        pendingPositionDigits = [UInt8?](repeating: nil, count: 10)
+        expectedPositionController = nil
     }
 
     private func positionDisplayWithoutLocking() -> String? {

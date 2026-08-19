@@ -74,9 +74,9 @@ private func positionSnapshot(
 }
 
 private func recordPosition(_ display: String, in monitor: MackieControlFeedbackMonitor) {
-    let words = display.reversed().enumerated().map { index, character in
+    let words = display.enumerated().map { index, character in
         0x20B0_0000
-            | UInt32(0x40 + index) << 8
+            | UInt32(0x49 - index) << 8
             | UInt32(character.asciiValue!)
     }
     monitor.record([MIDIMessage(timestamp: 1, words: words)])

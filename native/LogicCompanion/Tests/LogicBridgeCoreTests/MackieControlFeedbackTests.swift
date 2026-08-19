@@ -3,6 +3,14 @@ import Testing
 
 @testable import LogicBridgeCore
 
+private func positionSweep(_ display: String) -> [UInt32] {
+    display.enumerated().map { index, character in
+        0x20B0_0000
+            | UInt32(0x49 - index) << 8
+            | UInt32(character.asciiValue!)
+    }
+}
+
 @Test("feedback monitor distinguishes Mackie-compatible UMP traffic")
 func feedbackMonitorDistinguishesMackieCompatibleUMPTraffic() {
     let observedAt = Date(timeIntervalSince1970: 1_700_000_000)
@@ -59,20 +67,42 @@ func feedbackMonitorDecodesCompletePositionDisplay() {
     let monitor = MackieControlFeedbackMonitor(now: { observedAt })
 
     monitor.record([MIDIMessage(timestamp: 1, words: [
-        0x20B0_4030,
-        0x20B0_4131,
-        0x20B0_4232,
-        0x20B0_4333,
-        0x20B0_4474,
-        0x20B0_4535,
-        0x20B0_4636,
-        0x20B0_4737,
-        0x20B0_4800,
         0x20B0_4920,
+        0x20B0_4800,
+        0x20B0_4737,
+        0x20B0_4636,
+        0x20B0_4535,
+        0x20B0_4474,
+        0x20B0_4333,
+        0x20B0_4232,
+        0x20B0_4131,
+        0x20B0_4030,
     ])])
 
     let snapshot = monitor.feedbackSnapshot
-    #expect(snapshot.positionSequence == 10)
+    #expect(snapshot.positionSequence == 1)
     #expect(snapshot.positionDisplay == "0076543210")
     #expect(snapshot.positionObservedAt == observedAt)
+}
+
+@Test("feedback monitor commits only complete Mackie position sweeps")
+func feedbackMonitorCommitsOnlyCompletePositionSweeps() {
+    let monitor = MackieControlFeedbackMonitor()
+    monitor.record([MIDIMessage(
+        timestamp: 1,
+        words: positionSweep("0010101006")
+    )])
+
+    monitor.record([MIDIMessage(timestamp: 2, words: [
+        0x20B0_4031,
+    ])])
+    #expect(monitor.feedbackSnapshot.positionSequence == 1)
+    #expect(monitor.feedbackSnapshot.positionDisplay == "0010101006")
+
+    monitor.record([MIDIMessage(
+        timestamp: 3,
+        words: positionSweep("0020101001")
+    )])
+    #expect(monitor.feedbackSnapshot.positionSequence == 2)
+    #expect(monitor.feedbackSnapshot.positionDisplay == "0020101001")
 }
