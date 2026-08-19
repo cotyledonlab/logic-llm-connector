@@ -6,10 +6,10 @@ multiple Logic adapters behind one stable interface.
 
 ## Status
 
-Foundation work is in progress. Environment diagnosis and verified transport
-play, stop, relative movement, and project-start location are supported. Test
-Project lifecycle tools are implemented and awaiting their opt-in real-Logic
-acceptance run; additional mutating Logic tools are added only after acceptance.
+Foundation work is in progress. Environment diagnosis, verified transport, and
+the safe Test Project lifecycle are supported. Track Operations are the next
+delivery slice; additional mutating Logic tools are added only through isolated
+Test Project acceptance.
 
 ## Architecture
 
@@ -47,7 +47,9 @@ open project.
 The Test Project lifecycle acceptance is isolated from the ordinary transport
 gate. Logic must be running with no document open, and the fixture must be a
 saved `.logicx` project that the test may copy. The source is never opened or
-modified:
+modified. This gate has passed against packaged Logic Pro for open, duplicate
+rejection, save, close, reopen, cleanup after success, and cleanup after an
+injected failure:
 
 ```sh
 LOGIC_PROJECT_INTEGRATION_TEST=1 \
@@ -89,7 +91,12 @@ opens it. `logic_save_test_project`, `logic_close_test_project`,
 the observed Logic document identity matches that managed copy. Save and
 cleanup require explicit confirmation; close rejects unsaved changes. The
 `logic://project/state` resource reports the observed front document and whether
-the Test Project policy context is verified.
+the Test Project policy context is verified. Lifecycle commands use Apple
+Events without waiting for Logic's reply; structural Accessibility observations
+of the document URL and edited flag verify their postconditions, with Apple
+Events retained as an observation fallback. A timed-out asynchronous open keeps
+its copied workspace until the exact delayed document can be observed, closed,
+and safely cleaned.
 
 The signed Companion runs as a menu-bar app. Its menu continuously reports the
 native connection, whether Logic is running, and Exclusive Test Mode status.

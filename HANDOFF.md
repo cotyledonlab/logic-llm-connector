@@ -4,8 +4,8 @@
 
 - Repository: `cotyledonlab/logic-llm-connector` (private)
 - Branch: `main`
-- Latest implementation commit: `c6402e2`
-- Last completed acceptance commit: `a7312cb`
+- Latest implementation commit: `cb91b6a`
+- Last completed acceptance: ticket 0010 packaged Test Project lifecycle
 - Specification: [`SPEC.md`](SPEC.md)
 - Delivery status: [`docs/tickets/README.md`](docs/tickets/README.md)
 - Expected worktree state after this handoff commit: clean and pushed
@@ -24,6 +24,7 @@
   and inbound MIDI feedback
 - 0009 — feedback-verified play, stop, relative movement, and absolute
   project-start location
+- 0010 — safe Test Project open, save, close, reopen, and cleanup through MCP
 
 Ticket 0006 was deliberately split after its tracer bullet proved that AX
 inspection and mutable automation safety are separate vertical slices.
@@ -78,19 +79,36 @@ drift pauses automation and cancels pending UI work.
 
 ### Test Project lifecycle implementation
 
-Ticket 0010 is implemented through the contract, MCP, native bridge, packaged
-Companion, and deterministic tests, but remains in progress until its opt-in
-real-Logic acceptance passes. MCP exposes `logic_open_test_project`,
+Ticket 0010 is complete through the contract, MCP, native bridge, packaged
+Companion, deterministic tests, and opt-in real-Logic acceptance. MCP exposes
+`logic_open_test_project`,
 `logic_save_test_project`, `logic_close_test_project`,
 `logic_reopen_test_project`, `logic_cleanup_test_project`, and the
 `logic://project/state` resource.
 
 Fixtures are copied before open into mode-`0700` workspaces below
 `~/Library/Application Support/Logic LLM Connector/Test Projects`. Apple Events
-observe document name, path, and modified state. Every operation rejects an
-identity mismatch; close rejects unsaved changes; visible modal dialogs and
-Automation denial fail explicitly. Cleanup closes only the matching managed
-copy without saving and removes only its owned workspace.
+dispatch lifecycle commands without waiting for Logic's sometimes-blocked
+reply. Accessibility observes the standard document URL and close-button edited
+flag for non-blocking name, path, and modified-state postconditions, with Apple
+Events retained as an observation fallback. Every operation rejects an identity
+mismatch; close rejects unsaved changes; visible modal dialogs and Automation
+denial fail explicitly. Cleanup closes only the matching managed copy without
+saving and removes only its owned workspace.
+
+The packaged acceptance passed on 2026-08-19 using the authorized source fixture
+`~/Music/Logic/LLM Jazz.logicx`. It verified MCP open, duplicate-open rejection,
+save, close, reopen, cleanup after success, and cleanup after an injected test
+failure in 4.81 seconds. Post-run observation found no Logic document and no
+connector-owned Test Project workspace; the source fixture was unchanged.
+The acceptance starts after a short packaged-Companion settle interval because
+Logic processes recreated virtual MIDI endpoints asynchronously.
+
+An acceptance-driven delayed-open case established a further safety invariant:
+after dispatch, a missing open postcondition retains the managed workspace and
+marks cleanup incomplete. Cleanup will remove it only after the exact delayed
+document becomes observable and is closed. Save and close Apple Events target
+the recorded project path rather than whichever document happens to be front.
 
 ### Virtual MIDI endpoints
 
@@ -102,10 +120,11 @@ its full process lifetime:
 
 Both advertise `Cotyledon Lab` as manufacturer and
 `Logic LLM Connector Control` as model. Timestamped UMP messages loop through
-both directions. Destination callbacks only copy the bounded packet data before
-handing it to a dedicated dispatch queue. Missing endpoints are observable,
-recreated independently with their stable metadata, and retried by the
-Companion's existing status cadence.
+both directions. Destination callbacks copy variable-length packet data from
+the original CoreMIDI event-list storage before handing it to a dedicated
+dispatch queue; multi-packet input has a regression test. Missing endpoints are
+observable, recreated independently with their stable metadata, and retried by
+the Companion's existing status cadence.
 
 ### Mackie Control onboarding
 
@@ -162,9 +181,9 @@ target without claiming arbitrary-position restoration.
 - Actual signing TeamIdentifier: `4N63MQVR2B`
 - Designated requirement: certificate-backed, not code-hash-backed
 
-No Logic project edit or save has occurred. Ticket 0009 acceptance performed
-only transport movement and left the playhead at project start. The completed
-location acceptance restored the initially enabled Cycle state.
+Ticket 0010 opened and saved only connector-owned copies. Its authorized source
+fixture was never opened or modified. Logic had no document open and the Test
+Projects directory was empty after acceptance.
 
 ## Validation
 
@@ -183,7 +202,7 @@ The latest non-UI gates passed:
 
 - 10 JSON Schema contract tests
 - 4 MCP client tests
-- 45 discovered Swift tests, with 3 real-Logic-only cases skipped in the
+- 47 discovered Swift tests, with 3 real-Logic-only cases skipped in the
   ordinary native suite
 - certificate-backed package identity test
 - packaged, full-stack real-Logic integration tests covered Doctor, default
@@ -192,6 +211,8 @@ The latest non-UI gates passed:
   emergency stop, focus-independent play/stop, transport state, absolute
   project-start location, forward movement, exact project-start restoration,
   and Cycle-state restoration
+- isolated packaged MCP lifecycle acceptance covered open, duplicate rejection,
+  save, close, reopen, success cleanup, and injected-failure cleanup
 
 `npm run test:integration` sets `LOGIC_INTEGRATION_TEST=1` and exercises the
 running Logic installation through the packaged Companion. The earlier
@@ -204,22 +225,10 @@ playhead. No audio-device choice was made.
 
 ## Next work
 
-Finish [`0010 — Test Project lifecycle`](docs/tickets/0010-test-project-lifecycle.md)
-by running its isolated real-Logic acceptance. The last attempt stopped before
-dispatch because Logic has the user project `LLM Jazz.logicx` open with unsaved
-changes. It was not saved, closed, or copied.
-
-After the user closes that document and supplies a saved disposable fixture,
-run:
-
-```sh
-LOGIC_PROJECT_INTEGRATION_TEST=1 \
-LOGIC_TEST_PROJECT_FIXTURE="/absolute/path/to/Fixture.logicx" \
-npm run test:integration
-```
-
-On success, mark ticket 0010 complete, update the delivery map and handoff, then
-commit and push the acceptance checkpoint. Do not begin ticket 0011 first.
+Begin [`0011 — Track Operations`](docs/tickets/0011-track-operations.md). Add
+verifiable inspection, creation, naming, selection, duplication, reorder, and
+policy-gated deletion only inside a managed Test Project. Real-Logic tests must
+restore or discard their copied project deterministically.
 
 ## Important implementation facts
 
@@ -239,6 +248,9 @@ commit and push the acceptance checkpoint. Do not begin ticket 0011 first.
 - `TestProjectLifecycleController` is the sole owner of managed project context.
   Its default root is under Application Support; never treat an arbitrary open
   document as a Test Project or delete outside the recorded copied workspace.
+- Lifecycle mutations dispatch no-reply Apple Events and establish success only
+  from the observed Accessibility document URL and edited flag; Apple Events are
+  the fallback observer when Accessibility identity is unavailable.
 - `VirtualMIDIEndpointOwner` is the stable CoreMIDI seam. It uses MIDI 1.0 UMP,
   preserves host timestamps, serializes endpoint access, and hands receive work
   off the CoreMIDI callback thread.
@@ -266,8 +278,7 @@ commit and push the acceptance checkpoint. Do not begin ticket 0011 first.
 ## Do not do next
 
 - Do not write Logic preference files directly.
-- Do not add track, region, or mixer operations before ticket 0010 establishes
-  the Test Project lifecycle and enables Exclusive Test Mode safely.
+- Do not add region or mixer operations before their ordered delivery tickets.
 - Do not mutate the currently open Logic project.
 - Do not add arbitrary AX actions to `logic_inspect_ui`.
 - Do not replace certificate signing with ad-hoc signing; ad-hoc designated

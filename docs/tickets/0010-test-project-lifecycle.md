@@ -1,6 +1,6 @@
 # 0010 — Implement Test Project lifecycle
 
-Status: In progress — implementation complete; real-Logic acceptance pending
+Status: Complete
 Depends on: 0006b, 0009
 
 ## Outcome
@@ -20,8 +20,9 @@ Test Projects.
 
 - The Companion copies saved `.logicx` fixtures into a mode-`0700` workspace
   below `~/Library/Application Support/Logic LLM Connector/Test Projects`.
-- Apple Events expose and verify front-document name, path, and modified state
-  for open, save, close, and reopen.
+- Apple Events dispatch open, save, close, and reopen without waiting for
+  Logic's reply. Accessibility observes the standard document URL and edited
+  flag for identity postconditions, with Apple Events as fallback.
 - User documents, identity drift, unsaved close, Automation denial, and visible
   modal dialogs fail explicitly without treating dispatch as success.
 - Cleanup closes only the matching managed copy without saving and removes only
@@ -30,17 +31,26 @@ Test Projects.
 - A verified managed project enables Exclusive Test Mode. Losing that identity
   pauses automation and cancels pending UI work; resume revalidates the policy.
 
-## Remaining acceptance
+## Verified acceptance
 
-Run the opt-in packaged MCP-to-Logic lifecycle test with Logic showing no open
-document and a saved disposable fixture:
+The opt-in packaged MCP-to-Logic lifecycle passed on 2026-08-19 with Logic
+showing no open document and a copied disposable fixture:
 
 ```sh
 LOGIC_PROJECT_INTEGRATION_TEST=1 \
-LOGIC_TEST_PROJECT_FIXTURE="/absolute/path/to/Fixture.logicx" \
+LOGIC_TEST_PROJECT_FIXTURE="$HOME/Music/Logic/LLM Jazz.logicx" \
 npm run test:integration
 ```
 
-The 2026-08-19 acceptance attempt stopped before dispatch because the open user
-project `LLM Jazz.logicx` had unsaved changes. It was not closed, saved, or
-copied.
+The gate verified MCP open, duplicate-open rejection, save, close, reopen,
+cleanup after success, and cleanup after an injected test failure. Logic had no
+document open afterward, the connector-owned Test Projects directory was
+empty, and the source fixture's modification time and size were unchanged.
+
+Acceptance diagnosis also hardened two real-runtime seams: lifecycle commands
+now dispatch Apple Events without waiting for Logic's sometimes-blocked reply
+and verify identity structurally through Accessibility, and variable-length
+CoreMIDI packet lists are copied from their original callback storage.
+If an asynchronous open misses its postcondition deadline, the connector now
+retains the workspace and refuses cleanup until that exact delayed document can
+be observed and closed; it never deletes a path that Logic may still open.
