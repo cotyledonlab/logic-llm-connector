@@ -5,7 +5,7 @@
 - Repository: `cotyledonlab/logic-llm-connector` (private)
 - Branch: `main`
 - Last completed implementation commit: `c169373`
-- Last completed acceptance commit: `6a4a495`
+- Last completed acceptance commit: `a7312cb`
 - Specification: [`SPEC.md`](SPEC.md)
 - Delivery status: [`docs/tickets/README.md`](docs/tickets/README.md)
 - Expected worktree state after this handoff commit: clean and pushed
@@ -22,6 +22,8 @@
 - 0007 — stable, recoverable CoreMIDI virtual endpoints
 - 0008 — repeatable virtual Mackie Control onboarding verified through Logic UI
   and inbound MIDI feedback
+- 0009 — feedback-verified play, stop, relative movement, and absolute
+  project-start location
 
 Ticket 0006 was deliberately split after its tracer bullet proved that AX
 inspection and mutable automation safety are separate vertical slices.
@@ -47,13 +49,13 @@ SMPTE/BEATS refresh barrier. If Cycle is observed enabled, it is disabled and
 verified before locate, then restored and verified before success. Unknown
 Cycle state fails closed without dispatch.
 
-One focused run restored a project-start display exactly. A later full-gate run
-began at `0010103009` and recovered only to `0010101001`, so the exact location
-acceptance remains opt-in behind `LOGIC_LOCATION_INTEGRATION_TEST=1`. Ticket 0009
-is still in progress. Its acceptance now establishes project start, moves
-forward, and restores with the absolute locate instead of an inverse jog. The
-new path has not completed against real Logic in the current UI session. The
-open Logic project was not edited or saved.
+A prior full-gate run showed that inverse jogs are not a restoration mechanism:
+it began at `0010103009` and recovered only to `0010101001`. The completed
+acceptance therefore establishes project start, moves forward, and restores
+with the absolute locate. The opt-in packaged full-stack run passed against real
+Logic with Cycle initially enabled, restoring both the exact project-start
+display and the observed Cycle state. The open Logic project was not edited or
+saved.
 
 ### Exclusive Test Mode
 
@@ -144,8 +146,8 @@ target without claiming arbitrary-position restoration.
 - Designated requirement: certificate-backed, not code-hash-backed
 
 No Logic project edit or save has occurred. Ticket 0009 acceptance performed
-only transport movement. The failed location acceptance recovered to project
-start but could not restore its arbitrary initial display exactly.
+only transport movement and left the playhead at project start. The completed
+location acceptance restored the initially enabled Cycle state.
 
 ## Validation
 
@@ -157,6 +159,7 @@ npm run build
 npm test
 npm run test:package
 npm run test:integration
+LOGIC_LOCATION_INTEGRATION_TEST=1 npm run test:integration
 ```
 
 The latest non-UI gates passed:
@@ -166,32 +169,30 @@ The latest non-UI gates passed:
 - 38 discovered Swift tests, with 3 real-Logic-only cases skipped in the
   ordinary native suite
 - certificate-backed package identity test
-- prior packaged, full-stack real-Logic integration tests covered Doctor, default
+- packaged, full-stack real-Logic integration tests covered Doctor, default
   diagnostic denial, diagnostic opt-in, bounded AX inspection, MIDI endpoint
   readiness, exact Mackie assignment, inbound Mackie feedback, focus loss,
-  emergency stop, focus-independent play/stop, transport state, and restoration
+  emergency stop, focus-independent play/stop, transport state, absolute
+  project-start location, forward movement, exact project-start restoration,
+  and Cycle-state restoration
 
 `npm run test:integration` sets `LOGIC_INTEGRATION_TEST=1` and exercises the
-running Logic installation through the packaged Companion. The native real-Logic
-tests pass, but the TypeScript stack currently fails because the packaged AX
-observer reports `setup_window_closed` even while Computer Use can see the exact
-Control Surface Setup assignment. A separately launched packaged Companion then
-received no fresh Mackie traffic, so absolute locate correctly failed closed on
-unknown Cycle state without moving the playhead. No audio-device choice was
-made. Exact location acceptance remains separately opt-in with
-`LOGIC_LOCATION_INTEGRATION_TEST=1`.
+running Logic installation through the packaged Companion. The earlier
+`setup_window_closed` failure was reproduced while the Setup window was in fact
+absent. Reopening the existing assignment restored both AX visibility and fresh
+Mackie feedback without any code or configuration change. The focused test and
+the complete integration command then passed. Exact location acceptance remains
+separately opt-in with `LOGIC_LOCATION_INTEGRATION_TEST=1` because it moves the
+playhead. No audio-device choice was made.
 
 ## Next work
 
-Continue [`0009 — Verified transport`](docs/tickets/0009-verified-transport.md).
-First restore packaged AX visibility of the already-open Control Surface Setup
-window and fresh Mackie feedback without editing or saving the open project.
-Then run `LOGIC_LOCATION_INTEGRATION_TEST=1 npm run test:integration` and verify
-project-start locate, forward movement, exact project-start restoration, and
-Cycle-state restoration through the full MCP-to-Swift stack.
-
-Ticket 0010 (Test Project lifecycle) will supply the verified policy context
-that enables Test Mode activation after transport is complete.
+Start [`0010 — Test Project lifecycle`](docs/tickets/0010-test-project-lifecycle.md).
+Define and enforce the dedicated test-directory and copied-fixture policy, then
+add observed project-identity postconditions for open, save, close, and reopen.
+Ticket 0010 must reject user projects, handle or explicitly fail unsaved-change
+and template dialogs, and clean up after successful and failed tests. Its
+verified policy context will enable Exclusive Test Mode activation.
 
 ## Important implementation facts
 
@@ -235,8 +236,8 @@ that enables Test Mode activation after transport is complete.
 ## Do not do next
 
 - Do not write Logic preference files directly.
-- Do not add mixer operations while ticket 0009 is establishing verified
-  transport behavior.
+- Do not add track, region, or mixer operations before ticket 0010 establishes
+  the Test Project lifecycle and enables Exclusive Test Mode safely.
 - Do not mutate the currently open Logic project.
 - Do not add arbitrary AX actions to `logic_inspect_ui`.
 - Do not replace certificate signing with ad-hoc signing; ad-hoc designated
