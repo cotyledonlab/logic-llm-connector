@@ -93,6 +93,20 @@ struct VirtualMIDIEndpointOwnerTests {
         #expect(queueMarker.wasObserved.value)
     }
 
+    @Test("multi-packet event lists are copied from their original storage")
+    func multiPacketEventListsUseOriginalStorage() {
+        let messages = [
+            MIDIMessage(timestamp: 100, words: [0x2090_3C64]),
+            MIDIMessage(timestamp: 200, words: [0x2080_3C00, 0x2090_4064]),
+        ]
+
+        let copied = withEventList(messages) {
+            VirtualMIDIEndpointOwner.copyMessages(from: $0)
+        }
+
+        #expect(copied == messages)
+    }
+
     @Test("removed virtual MIDI endpoints are reported and recreated")
     func removedEndpointsAreReportedAndRecreated() throws {
         let owner = try VirtualMIDIEndpointOwner()
@@ -173,21 +187,37 @@ private func withEventList<Result>(
     _ message: MIDIMessage,
     body: (UnsafePointer<MIDIEventList>) -> Result
 ) -> Result {
-    var eventList = MIDIEventList()
-    return withUnsafeMutablePointer(to: &eventList) { eventListPointer in
-        let packet = MIDIEventListInit(eventListPointer, ._1_0)
-        message.words.withUnsafeBufferPointer { words in
-            _ = MIDIEventListAdd(
+    withEventList([message], body: body)
+}
+
+private func withEventList<Result>(
+    _ messages: [MIDIMessage],
+    body: (UnsafePointer<MIDIEventList>) -> Result
+) -> Result {
+    let capacity = 4_096
+    let storage = UnsafeMutableRawPointer.allocate(
+        byteCount: capacity,
+        alignment: MemoryLayout<MIDIEventList>.alignment
+    )
+    defer { storage.deallocate() }
+    let eventListPointer = storage.bindMemory(to: MIDIEventList.self, capacity: 1)
+    eventListPointer.initialize(to: MIDIEventList())
+    defer { eventListPointer.deinitialize(count: 1) }
+
+    var packet = MIDIEventListInit(eventListPointer, ._1_0)
+    for message in messages {
+        packet = message.words.withUnsafeBufferPointer { words in
+            MIDIEventListAdd(
                 eventListPointer,
-                MemoryLayout<MIDIEventList>.size,
+                capacity,
                 packet,
                 message.timestamp,
                 words.count,
                 words.baseAddress!
             )
         }
-        return body(UnsafePointer(eventListPointer))
     }
+    return body(UnsafePointer(eventListPointer))
 }
 
 private func copyMessages(from eventList: UnsafePointer<MIDIEventList>) -> [MIDIMessage] {

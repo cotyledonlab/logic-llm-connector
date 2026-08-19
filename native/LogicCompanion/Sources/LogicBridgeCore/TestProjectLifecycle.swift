@@ -544,17 +544,28 @@ public final class TestProjectLifecycleController: ProjectLifecycleControlling, 
                 cleanupPerformed: cleanupPerformed,
                 failure: failure
             ),
-            evidence: [Evidence(source: "Logic Apple Events document observation", observedAt: observedAt, value: .object(evidenceValue))]
+            evidence: [Evidence(source: "Logic document identity observation", observedAt: observedAt, value: .object(evidenceValue))]
         )
     }
 }
 
 public struct MacLogicProjectScripting: LogicProjectScripting {
     private static let separator = Character(UnicodeScalar(31))
+    private enum AccessibilityObservation {
+        case unavailable
+        case observed(LogicProjectIdentity?)
+    }
 
     public init() {}
 
     public func observe() throws -> LogicProjectIdentity? {
+        switch observeUsingAccessibility() {
+        case .observed(let project): return project
+        case .unavailable: return try observeUsingAppleEvents()
+        }
+    }
+
+    private func observeUsingAppleEvents() throws -> LogicProjectIdentity? {
         let output = try execute("""
         with timeout of 5 seconds
         tell application id "com.apple.logic10"
@@ -576,22 +587,83 @@ public struct MacLogicProjectScripting: LogicProjectScripting {
         )
     }
 
+    private func observeUsingAccessibility() -> AccessibilityObservation {
+        guard AXIsProcessTrusted(),
+              let logic = NSWorkspace.shared.runningApplications.first(where: {
+                  $0.bundleIdentifier == "com.apple.logic10"
+              }) else { return .unavailable }
+        let application = AXUIElementCreateApplication(logic.processIdentifier)
+        var windowsValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            application,
+            kAXWindowsAttribute as CFString,
+            &windowsValue
+        ) == .success,
+        let windows = windowsValue as? [AXUIElement] else { return .unavailable }
+
+        for window in windows {
+            var documentValue: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(
+                window,
+                kAXDocumentAttribute as CFString,
+                &documentValue
+            ) == .success,
+            let documentValue else { continue }
+
+            let documentURL: URL?
+            if let value = documentValue as? URL {
+                documentURL = value
+            } else if let value = documentValue as? String {
+                let parsed = URL(string: value)
+                documentURL = parsed?.isFileURL == true ? parsed : URL(fileURLWithPath: value)
+            } else {
+                documentURL = nil
+            }
+            guard let documentURL,
+                  documentURL.pathExtension.lowercased() == "logicx" else { continue }
+
+            var closeButtonValue: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(
+                window,
+                kAXCloseButtonAttribute as CFString,
+                &closeButtonValue
+            ) == .success,
+            let closeButtonValue else { return .unavailable }
+            let closeButton = closeButtonValue as! AXUIElement
+            var editedValue: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(
+                closeButton,
+                kAXEditedAttribute as CFString,
+                &editedValue
+            ) == .success,
+            let modified = (editedValue as? NSNumber)?.boolValue else { return .unavailable }
+            let standardized = documentURL.standardizedFileURL.resolvingSymlinksInPath()
+            return .observed(LogicProjectIdentity(
+                name: standardized.lastPathComponent,
+                path: standardized.path,
+                modified: modified,
+                observedAt: Date()
+            ))
+        }
+        return .observed(nil)
+    }
+
     public func open(projectAt url: URL) throws {
         _ = try execute("""
-        with timeout of 30 seconds
-        tell application id "com.apple.logic10"
-            open (POSIX file "\(escape(url.path))")
-        end tell
-        end timeout
+        ignoring application responses
+            tell application id "com.apple.logic10"
+                open (POSIX file "\(escape(url.path))")
+            end tell
+        end ignoring
         """)
     }
 
     public func save() throws {
-        _ = try execute("with timeout of 30 seconds\ntell application id \"com.apple.logic10\" to save front document\nend timeout")
+        _ = try execute("ignoring application responses\ntell application id \"com.apple.logic10\" to save front document\nend ignoring")
     }
 
     public func closeWithoutSaving() throws {
-        _ = try execute("with timeout of 30 seconds\ntell application id \"com.apple.logic10\" to close front document saving no\nend timeout")
+        _ = try execute("ignoring application responses\ntell application id \"com.apple.logic10\" to close front document saving no\nend ignoring")
     }
 
     private func execute(_ source: String) throws -> String {

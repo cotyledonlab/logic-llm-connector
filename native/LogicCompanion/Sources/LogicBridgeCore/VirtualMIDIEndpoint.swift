@@ -282,20 +282,24 @@ public final class VirtualMIDIEndpointOwner: TransportMIDISending, @unchecked Se
         ) == noErr && observedID == uniqueID
     }
 
-    private static func copyMessages(
+    static func copyMessages(
         from eventList: UnsafePointer<MIDIEventList>
     ) -> [MIDIMessage] {
         var messages: [MIDIMessage] = []
-        var packet = withUnsafePointer(to: eventList.pointee.packet) {
-            UnsafeRawPointer($0).assumingMemoryBound(to: MIDIEventPacket.self)
-        }
+        let firstPacketOffset = MemoryLayout<MIDIEventList>.offset(of: \.packet)!
+        let wordsOffset = MemoryLayout<MIDIEventPacket>.offset(of: \.words)!
+        var packet = UnsafeRawPointer(eventList)
+            .advanced(by: firstPacketOffset)
+            .assumingMemoryBound(to: MIDIEventPacket.self)
         for _ in 0..<eventList.pointee.numPackets {
-            let words = withUnsafePointer(to: packet.pointee.words) {
-                Array(UnsafeBufferPointer(
-                    start: UnsafeRawPointer($0).assumingMemoryBound(to: UInt32.self),
-                    count: Int(packet.pointee.wordCount)
-                ))
-            }
+            let wordCount = Int(packet.pointee.wordCount)
+            guard (1...64).contains(wordCount) else { break }
+            let words = Array(UnsafeBufferPointer(
+                start: UnsafeRawPointer(packet)
+                    .advanced(by: wordsOffset)
+                    .assumingMemoryBound(to: UInt32.self),
+                count: wordCount
+            ))
             messages.append(
                 MIDIMessage(
                     timestamp: packet.pointee.timeStamp,
