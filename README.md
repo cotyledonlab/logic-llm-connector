@@ -7,8 +7,9 @@ multiple Logic adapters behind one stable interface.
 ## Status
 
 Foundation work is in progress. Environment diagnosis and verified transport
-play/stop are supported; additional mutating Logic tools are added only after
-they pass a real-Logic integration test.
+play, stop, relative movement, and project-start location are supported;
+additional mutating Logic tools are added only after they pass a real-Logic
+integration test.
 
 ## Architecture
 
@@ -39,8 +40,9 @@ Project-mutating real-Logic tests will use disposable fixtures and require
 explicit test mode. The current integration tests launch the Swift Companion,
 connect over a mode-`0600` Unix socket, verify `logic_doctor`, inspect a bounded
 text-free Accessibility snapshot, verify focus-loss and emergency-stop safety,
-and exercise reversible play/stop while restoring the original transport state.
-They do not edit or save the open project.
+and exercise reversible play/stop plus opt-in project-start location while
+restoring the observed transport and Cycle state. They do not edit or save the
+open project.
 
 ## Current capability
 

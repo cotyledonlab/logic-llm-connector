@@ -15,7 +15,7 @@ passes and the result is committed and pushed.
 | [0006b](0006b-exclusive-test-mode.md) | Complete | Visible status and Exclusive Test Mode |
 | [0007](0007-virtual-midi-endpoint.md) | Complete | Persistent CoreMIDI virtual endpoint |
 | [0008](0008-mackie-onboarding.md) | Complete | Repeatable Logic control-surface setup |
-| [0009](0009-verified-transport.md) | In Progress | Play/stop/location with feedback |
+| [0009](0009-verified-transport.md) | Complete | Play/stop/location with feedback |
 | [0010](0010-test-project-lifecycle.md) | Pending | Safe open/save/close/reopen |
 | [0011](0011-track-operations.md) | Pending | Track creation and selection |
 | [0012](0012-midi-region-operations.md) | Pending | MIDI creation and editing |
