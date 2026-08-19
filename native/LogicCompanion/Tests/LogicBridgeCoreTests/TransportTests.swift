@@ -40,6 +40,39 @@ private final class FakeTransportClock: @unchecked Sendable {
     }
 }
 
+private final class ScriptedTransportFeedback: MackieControlFeedbackObserving, @unchecked Sendable {
+    private let lock = NSLock()
+    private let snapshots: [MackieControlFeedbackSnapshot]
+    private var index = 0
+
+    init(_ snapshots: [MackieControlFeedbackSnapshot]) {
+        self.snapshots = snapshots
+    }
+
+    var feedbackSnapshot: MackieControlFeedbackSnapshot {
+        lock.withLock {
+            let snapshot = snapshots[min(index, snapshots.count - 1)]
+            index += 1
+            return snapshot
+        }
+    }
+}
+
+private func positionSnapshot(
+    _ display: String,
+    sequence: UInt64
+) -> MackieControlFeedbackSnapshot {
+    MackieControlFeedbackSnapshot(
+        packetCount: Int(sequence),
+        midi1ChannelVoicePacketCount: Int(sequence),
+        systemExclusivePacketCount: 0,
+        lastReceivedAt: Date(timeIntervalSince1970: TimeInterval(sequence)),
+        positionSequence: sequence,
+        positionDisplay: display,
+        positionObservedAt: Date(timeIntervalSince1970: TimeInterval(sequence))
+    )
+}
+
 private func recordPosition(_ display: String, in monitor: MackieControlFeedbackMonitor) {
     let words = display.reversed().enumerated().map { index, character in
         0x20B0_0000
@@ -137,8 +170,8 @@ func missingMIDISourceFailsWithoutDispatch() {
     #expect(midi.sent.isEmpty)
 }
 
-@Test("forward jog is verified by newer position feedback")
-func forwardJogIsVerifiedByPositionFeedback() {
+@Test("forward jog reports directional position feedback as best effort")
+func forwardJogReportsBestEffortPositionFeedback() {
     let monitor = MackieControlFeedbackMonitor()
     recordPosition("0000000100", in: monitor)
     let midi = FakeTransportMIDI { message in
@@ -155,10 +188,33 @@ func forwardJogIsVerifiedByPositionFeedback() {
     )
 
     #expect(midi.sent.map(\.words) == [[0x20B0_3C01]])
-    #expect(result.status == .succeeded)
-    #expect(result.reliability == .verifiedDeterministic)
+    #expect(result.status == .partial)
+    #expect(result.reliability == .bestEffort)
     #expect(result.data.requestedDirection == .forward)
     #expect(result.data.steps == 1)
     #expect(result.data.initialPosition.display == "0000000100")
     #expect(result.data.position.display == "0000000101")
+    #expect(result.evidence.last?.source == "Mackie Control position display coherence")
+}
+
+@Test("sparse position updates cannot verify a relative jog")
+func sparsePositionUpdatesDoNotVerifyRelativeJog() {
+    let feedback = ScriptedTransportFeedback([
+        positionSnapshot("0010101006", sequence: 10),
+        positionSnapshot("0010101006", sequence: 10),
+        positionSnapshot("0010101001", sequence: 11),
+        positionSnapshot("0020101001", sequence: 12),
+    ])
+    let midi = FakeTransportMIDI()
+    let controller = MackieTransportController(midi: midi, feedback: feedback)
+
+    let result = controller.movePlayhead(
+        .backward,
+        steps: 1,
+        operationID: "jog-sparse-display",
+        timeoutMilliseconds: 500
+    )
+
+    #expect(result.status != .succeeded)
+    #expect(result.reliability != .verifiedDeterministic)
 }

@@ -220,11 +220,16 @@ public struct MackieTransportController: TransportControlling, Sendable {
                     direction: direction,
                     steps: steps,
                     dispatched: true,
-                    status: .succeeded,
-                    reliability: .verifiedDeterministic,
+                    status: .partial,
+                    reliability: .bestEffort,
                     startedAt: startedAt,
                     initial: initial,
-                    latest: latest
+                    latest: latest,
+                    extraEvidence: [Evidence(
+                        source: "Mackie Control position display coherence",
+                        observedAt: now(),
+                        value: .string("sparse character updates have no observed frame boundary")
+                    )]
                 )
             }
             wait(0.01)
