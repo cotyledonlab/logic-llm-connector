@@ -37,3 +37,4 @@ passes and the result is committed and pushed.
 - `d886546`, `4805724`, and `6a4a495` → ticket 0009 play/stop checkpoint
 - `8b146e3`, `e9258f4`, `dfddb3a`, `85a4a2e`, `3ae6a02`, and `2e11de0`
   → ticket 0009 location investigation
+- `c169373` → ticket 0009 absolute project-start locate

@@ -4,7 +4,7 @@
 
 - Repository: `cotyledonlab/logic-llm-connector` (private)
 - Branch: `main`
-- Last completed implementation commit: `2e11de0`
+- Last completed implementation commit: `c169373`
 - Last completed acceptance commit: `6a4a495`
 - Specification: [`SPEC.md`](SPEC.md)
 - Delivery status: [`docs/tickets/README.md`](docs/tickets/README.md)
@@ -40,10 +40,20 @@ for a second committed frame before comparing direction. This establishes a
 coherent directional postcondition, but equal inverse jogs are not a general
 restoration mechanism.
 
+MCP now also exposes `logic_locate` with the supported absolute target
+`project_start`. The Companion uses Logic's documented Mackie double-STOP
+mapping with Cycle disabled, then verifies the result through the reversible
+SMPTE/BEATS refresh barrier. If Cycle is observed enabled, it is disabled and
+verified before locate, then restored and verified before success. Unknown
+Cycle state fails closed without dispatch.
+
 One focused run restored a project-start display exactly. A later full-gate run
 began at `0010103009` and recovered only to `0010101001`, so the exact location
 acceptance remains opt-in behind `LOGIC_LOCATION_INTEGRATION_TEST=1`. Ticket 0009
-is still in progress. The open Logic project was not edited or saved.
+is still in progress. Its acceptance now establishes project start, moves
+forward, and restores with the absolute locate instead of an inverse jog. The
+new path has not completed against real Logic in the current UI session. The
+open Logic project was not edited or saved.
 
 ### Exclusive Test Mode
 
@@ -111,12 +121,14 @@ model cannot contain titles, values, descriptions, or UI actions.
 
 ### Verified transport
 
-`logic_play`, `logic_stop`, and `logic_move_playhead` are public by default.
+`logic_play`, `logic_stop`, `logic_move_playhead`, and `logic_locate` are public
+by default.
 Results include the requested state, whether a MIDI command was dispatched, the
 observed transport state, reliability, and Mackie feedback evidence.
 `logic://transport/state` reports playback plus observed cycle and record-button
-readiness. Location results carry coherent initial and final Mackie position
-frames, but no general exact-restoration strategy exists yet.
+readiness. Relative location results carry coherent initial and final Mackie
+position frames. Absolute project-start locate supplies an exact supported
+target without claiming arbitrary-position restoration.
 
 ## Verified local environment
 
@@ -149,9 +161,9 @@ npm run test:integration
 
 The latest non-UI gates passed:
 
-- 8 JSON Schema contract tests
+- 9 JSON Schema contract tests
 - 3 MCP client tests
-- 35 discovered Swift tests, with 3 real-Logic-only cases skipped in the
+- 38 discovered Swift tests, with 3 real-Logic-only cases skipped in the
   ordinary native suite
 - certificate-backed package identity test
 - prior packaged, full-stack real-Logic integration tests covered Doctor, default
@@ -160,18 +172,23 @@ The latest non-UI gates passed:
   emergency stop, focus-independent play/stop, transport state, and restoration
 
 `npm run test:integration` sets `LOGIC_INTEGRATION_TEST=1` and exercises the
-running Logic installation through the packaged Companion. Its latest rerun is
-blocked by Logic's visible “use John’s AirPods Pro?” modal; no audio-device
-choice was made. Dismiss that modal and keep Control Surface Setup visible before
-rerunning. Exact location restoration is separately opt-in with
-`LOGIC_LOCATION_INTEGRATION_TEST=1` and currently fails from arbitrary positions
-as documented above.
+running Logic installation through the packaged Companion. The native real-Logic
+tests pass, but the TypeScript stack currently fails because the packaged AX
+observer reports `setup_window_closed` even while Computer Use can see the exact
+Control Surface Setup assignment. A separately launched packaged Companion then
+received no fresh Mackie traffic, so absolute locate correctly failed closed on
+unknown Cycle state without moving the playhead. No audio-device choice was
+made. Exact location acceptance remains separately opt-in with
+`LOGIC_LOCATION_INTEGRATION_TEST=1`.
 
 ## Next work
 
 Continue [`0009 — Verified transport`](docs/tickets/0009-verified-transport.md).
-The next slice needs an absolute supported locate target or another restoration
-mechanism that does not assume equal and opposite jog messages are symmetric.
+First restore packaged AX visibility of the already-open Control Surface Setup
+window and fresh Mackie feedback without editing or saving the open project.
+Then run `LOGIC_LOCATION_INTEGRATION_TEST=1 npm run test:integration` and verify
+project-start locate, forward movement, exact project-start restoration, and
+Cycle-state restoration through the full MCP-to-Swift stack.
 
 Ticket 0010 (Test Project lifecycle) will supply the verified policy context
 that enables Test Mode activation after transport is complete.
@@ -197,6 +214,10 @@ that enables Test Mode activation after transport is complete.
 - `MackieTransportController` owns transport dispatch and verification. Never
   treat a successful `send` as operation success; only a matching newer
   `MackieControlFeedbackMonitor` observation verifies a transition.
+- Absolute project-start locate depends on observable Cycle feedback. When Cycle
+  is enabled it must be verified disabled before double STOP, and verified
+  restored after the position refresh; a fresh position frame alone is not
+  sufficient.
 - Position display frames begin at controller `0x49`, descend to `0x40`, and may
   omit unchanged digits. Commit only a bounded descending frame; isolated sparse
   updates remain uncommitted.
