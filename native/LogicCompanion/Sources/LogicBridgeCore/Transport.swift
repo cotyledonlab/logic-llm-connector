@@ -182,11 +182,28 @@ public struct MackieTransportController: TransportControlling, Sendable {
             )
         }
 
+        let deadline = startedAt.addingTimeInterval(
+            TimeInterval(timeoutMilliseconds) / 1_000
+        )
+        let firstRefreshDeadline = startedAt.addingTimeInterval(
+            TimeInterval(timeoutMilliseconds) / 2_000
+        )
+        var firstRefreshSequence: UInt64?
         do {
             let value: UInt32 = direction == .forward ? 0x01 : 0x41
             for _ in 0..<steps {
                 try midi.send(MIDIMessage(timestamp: 0, words: [0x20B0_3C00 | value]))
             }
+            try press(.smpteBeats)
+            while now() < firstRefreshDeadline {
+                let refreshed = feedback.feedbackSnapshot
+                if refreshed.positionSequence > initial.positionSequence {
+                    firstRefreshSequence = refreshed.positionSequence
+                    break
+                }
+                wait(0.01)
+            }
+            try press(.smpteBeats)
         } catch {
             return locationResult(
                 operationID: operationID,
@@ -206,13 +223,11 @@ public struct MackieTransportController: TransportControlling, Sendable {
             )
         }
 
-        let deadline = startedAt.addingTimeInterval(
-            TimeInterval(timeoutMilliseconds) / 1_000
-        )
         var latest = feedback.feedbackSnapshot
         while now() < deadline {
             latest = feedback.feedbackSnapshot
-            if latest.positionSequence > initial.positionSequence,
+            if let firstRefreshSequence,
+               latest.positionSequence > firstRefreshSequence,
                let latestDisplay = latest.positionDisplay,
                moved(from: initialDisplay, to: latestDisplay, direction: direction) {
                 return locationResult(
@@ -220,16 +235,11 @@ public struct MackieTransportController: TransportControlling, Sendable {
                     direction: direction,
                     steps: steps,
                     dispatched: true,
-                    status: .partial,
-                    reliability: .bestEffort,
+                    status: .succeeded,
+                    reliability: .verifiedDeterministic,
                     startedAt: startedAt,
                     initial: initial,
-                    latest: latest,
-                    extraEvidence: [Evidence(
-                        source: "Mackie Control position display coherence",
-                        observedAt: now(),
-                        value: .string("sparse character updates have no observed frame boundary")
-                    )]
+                    latest: latest
                 )
             }
             wait(0.01)

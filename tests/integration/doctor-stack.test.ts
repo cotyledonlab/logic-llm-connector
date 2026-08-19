@@ -71,6 +71,9 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
   });
 
   await waitForSocket(socketPath);
+  const activatedLogic = spawnSync("open", ["-a", "Logic Pro"]);
+  assert.equal(activatedLogic.status, 0, activatedLogic.stderr?.toString());
+  await new Promise((resolve) => setTimeout(resolve, 250));
   const bridge = new UnixSocketLogicBridge({ socketPath, timeoutMs: 2_000 });
   const result = await waitForMackieAcceptance(bridge);
 
@@ -128,6 +131,7 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
     stderr: "pipe",
   });
   const client = new Client({ name: "integration-client", version: "1.0.0" });
+  t.after(async () => client.close());
   await client.connect(mcpTransport);
   assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), [
     "logic_doctor",
@@ -153,6 +157,7 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
     JSON.stringify(initialTransport),
   );
   const restorePlaying = initialTransport.data.playing === "playing";
+  let transportFailure: unknown;
   try {
     const stopped = await client.callTool({
       name: "logic_stop",
@@ -163,6 +168,53 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
       (stopped.structuredContent as Record<string, unknown>)?.["status"],
       "succeeded",
     );
+
+    let locationStart: string | null = null;
+    let locationCurrent: string | null = null;
+    try {
+      const moved = await bridge.moveTransportPlayhead({
+        protocolVersion: "1.0.0",
+        operationId: "location-forward",
+        direction: "forward",
+        steps: 10,
+        timeoutMs: 1500,
+      });
+      locationStart = moved.data.initialPosition.display;
+      locationCurrent = moved.data.position.display;
+      assert.equal(moved.status, "succeeded", JSON.stringify(moved));
+      assert.equal(moved.reliability, "verified_deterministic");
+      assert.ok(
+        locationStart && locationCurrent && locationCurrent > locationStart,
+        JSON.stringify(moved),
+      );
+
+      const restored = await bridge.moveTransportPlayhead({
+        protocolVersion: "1.0.0",
+        operationId: "location-backward",
+        direction: "backward",
+        steps: 10,
+        timeoutMs: 1500,
+      });
+      locationCurrent = restored.data.position.display;
+      assert.equal(restored.status, "succeeded", JSON.stringify(restored));
+      assert.equal(locationCurrent, locationStart, JSON.stringify(restored));
+    } finally {
+      for (
+        let attempt = 0;
+        locationStart && locationCurrent && locationCurrent !== locationStart && attempt < 8;
+        attempt += 1
+      ) {
+        const recovery = await bridge.moveTransportPlayhead({
+          protocolVersion: "1.0.0",
+          operationId: `location-recovery-${attempt}`,
+          direction: locationCurrent < locationStart ? "forward" : "backward",
+          steps: 1,
+          timeoutMs: 1500,
+        });
+        locationCurrent = recovery.data.position.display;
+      }
+      assert.equal(locationCurrent, locationStart, "real-Logic playhead restoration failed");
+    }
 
     const finder = spawnSync("open", ["-a", "Finder"]);
     assert.equal(finder.status, 0, finder.stderr?.toString());
@@ -188,6 +240,7 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
     const transportContent = transportResource.contents[0];
     assert.ok(transportContent && "text" in transportContent);
     assert.equal(JSON.parse(transportContent.text).state.playing, "playing");
+    await new Promise((resolve) => setTimeout(resolve, 250));
 
     const stoppedAgain = await client.callTool({
       name: "logic_stop",
@@ -195,10 +248,18 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
     });
     assert.equal(stoppedAgain.isError, undefined, JSON.stringify(stoppedAgain.content));
     assert.equal(
+      (stoppedAgain.structuredContent as Record<string, unknown>)?.["status"],
+      "succeeded",
+      JSON.stringify(stoppedAgain.structuredContent),
+    );
+    assert.equal(
       ((stoppedAgain.structuredContent as Record<string, unknown>)?.["state"] as
         Record<string, unknown>)?.["playing"],
       "stopped",
     );
+
+  } catch (error) {
+    transportFailure = error;
   } finally {
     const restored = await bridge.setTransportPlaying({
       protocolVersion: "1.0.0",
@@ -206,8 +267,11 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
       playing: restorePlaying,
       timeoutMs: 1500,
     });
-    assert.equal(restored.status, "succeeded", JSON.stringify(restored));
+    if (transportFailure === undefined) {
+      assert.equal(restored.status, "succeeded", JSON.stringify(restored));
+    }
   }
+  if (transportFailure !== undefined) throw transportFailure;
   await client.close();
 
   const diagnosticTransport = new StdioClientTransport({

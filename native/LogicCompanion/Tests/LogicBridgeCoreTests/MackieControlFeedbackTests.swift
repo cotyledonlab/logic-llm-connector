@@ -85,8 +85,8 @@ func feedbackMonitorDecodesCompletePositionDisplay() {
     #expect(snapshot.positionObservedAt == observedAt)
 }
 
-@Test("feedback monitor commits only complete Mackie position sweeps")
-func feedbackMonitorCommitsOnlyCompletePositionSweeps() {
+@Test("feedback monitor commits only bounded Mackie position frames")
+func feedbackMonitorCommitsOnlyBoundedPositionFrames() {
     let monitor = MackieControlFeedbackMonitor()
     monitor.record([MIDIMessage(
         timestamp: 1,
@@ -101,7 +101,9 @@ func feedbackMonitorCommitsOnlyCompletePositionSweeps() {
 
     monitor.record([MIDIMessage(
         timestamp: 3,
-        words: positionSweep("0020101001")
+        words: positionSweep("0020101001").filter { word in
+            UInt8((word >> 8) & 0x7F) != 0x42
+        }
     )])
     #expect(monitor.feedbackSnapshot.positionSequence == 2)
     #expect(monitor.feedbackSnapshot.positionDisplay == "0020101001")

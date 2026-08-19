@@ -170,13 +170,19 @@ func missingMIDISourceFailsWithoutDispatch() {
     #expect(midi.sent.isEmpty)
 }
 
-@Test("forward jog reports directional position feedback as best effort")
-func forwardJogReportsBestEffortPositionFeedback() {
+@Test("forward jog is verified after a reversible display refresh")
+func forwardJogIsVerifiedAfterDisplayRefresh() {
     let monitor = MackieControlFeedbackMonitor()
     recordPosition("0000000100", in: monitor)
     let midi = FakeTransportMIDI { message in
-        guard message.words.first == 0x20B0_3C01 else { return }
-        recordPosition("0000000101", in: monitor)
+        switch message.words.first {
+        case 0x20B0_3C01:
+            monitor.record([MIDIMessage(timestamp: 1, words: [0x20B0_4031])])
+        case 0x2090_357F:
+            recordPosition("0000000101", in: monitor)
+        default:
+            break
+        }
     }
     let controller = MackieTransportController(midi: midi, feedback: monitor)
 
@@ -187,14 +193,17 @@ func forwardJogReportsBestEffortPositionFeedback() {
         timeoutMilliseconds: 500
     )
 
-    #expect(midi.sent.map(\.words) == [[0x20B0_3C01]])
-    #expect(result.status == .partial)
-    #expect(result.reliability == .bestEffort)
+    #expect(midi.sent.map(\.words) == [
+        [0x20B0_3C01],
+        [0x2090_357F], [0x2090_3500],
+        [0x2090_357F], [0x2090_3500],
+    ])
+    #expect(result.status == .succeeded)
+    #expect(result.reliability == .verifiedDeterministic)
     #expect(result.data.requestedDirection == .forward)
     #expect(result.data.steps == 1)
     #expect(result.data.initialPosition.display == "0000000100")
     #expect(result.data.position.display == "0000000101")
-    #expect(result.evidence.last?.source == "Mackie Control position display coherence")
 }
 
 @Test("sparse position updates cannot verify a relative jog")
@@ -206,13 +215,19 @@ func sparsePositionUpdatesDoNotVerifyRelativeJog() {
         positionSnapshot("0020101001", sequence: 12),
     ])
     let midi = FakeTransportMIDI()
-    let controller = MackieTransportController(midi: midi, feedback: feedback)
+    let clock = FakeTransportClock()
+    let controller = MackieTransportController(
+        midi: midi,
+        feedback: feedback,
+        now: { clock.now },
+        wait: { clock.advance($0) }
+    )
 
     let result = controller.movePlayhead(
         .backward,
         steps: 1,
         operationID: "jog-sparse-display",
-        timeoutMilliseconds: 500
+        timeoutMilliseconds: 100
     )
 
     #expect(result.status != .succeeded)

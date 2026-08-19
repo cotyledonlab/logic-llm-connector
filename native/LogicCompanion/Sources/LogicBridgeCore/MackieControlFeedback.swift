@@ -138,18 +138,23 @@ public final class MackieControlFeedbackMonitor: MackieControlFeedbackObserving,
         }
 
         if controller == 0x49 {
-            pendingPositionDigits = [UInt8?](repeating: nil, count: 10)
+            pendingPositionDigits = positionDigits
             pendingPositionDigits[9] = digit
             expectedPositionController = 0x48
             return
         }
 
-        guard controller == expectedPositionController else {
+        guard let expectedController = expectedPositionController,
+              controller <= expectedController else {
             resetPendingPositionSweep()
             return
         }
         pendingPositionDigits[Int(controller - 0x40)] = digit
         if controller == 0x40 {
+            guard pendingPositionDigits.allSatisfy({ $0 != nil }) else {
+                resetPendingPositionSweep()
+                return
+            }
             positionDigits = pendingPositionDigits
             positionSequence &+= 1
             positionObservedAt = now()
@@ -206,6 +211,7 @@ public final class MackieControlFeedbackMonitor: MackieControlFeedbackObserving,
 }
 
 public enum MackieTransportNote: UInt8, Sendable {
+    case smpteBeats = 0x35
     case cycle = 0x56
     case rewind = 0x5B
     case stop = 0x5D
