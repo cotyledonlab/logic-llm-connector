@@ -246,6 +246,58 @@ private struct FixedTrackOperationsController: TrackOperationsControlling {
     }
 }
 
+private struct FixedMIDIRegionOperationsController: MIDIRegionOperationsControlling {
+    func observe(operationID: String) -> MIDIRegionOperationResult { make(.observe, operationID) }
+    func create(trackID: String, name: String, position: MusicalTime, length: MusicalTime, notes: [MIDINoteContent], operationID: String, timeoutMilliseconds: Int) -> MIDIRegionOperationResult { make(.create, operationID, target: "region-a", created: ["region-a"]) }
+    func rename(regionID: String, name: String, operationID: String, timeoutMilliseconds: Int) -> MIDIRegionOperationResult { make(.rename, operationID, target: regionID) }
+    func move(regionID: String, position: MusicalTime, operationID: String, timeoutMilliseconds: Int) -> MIDIRegionOperationResult { make(.move, operationID, target: regionID) }
+    func resize(regionID: String, length: MusicalTime, operationID: String, timeoutMilliseconds: Int) -> MIDIRegionOperationResult { make(.resize, operationID, target: regionID) }
+    func duplicate(regionID: String, position: MusicalTime, operationID: String, timeoutMilliseconds: Int) -> MIDIRegionOperationResult { make(.duplicate, operationID, target: "region-b", created: ["region-b"]) }
+    func split(regionID: String, position: MusicalTime, operationID: String, timeoutMilliseconds: Int) -> MIDIRegionOperationResult { make(.split, operationID, target: regionID, created: ["region-b"]) }
+    func updateNote(regionID: String, noteID: String, note: MIDINoteContent, operationID: String, timeoutMilliseconds: Int) -> MIDIRegionOperationResult { make(.updateNote, operationID, target: regionID) }
+    func replaceNotes(regionID: String, notes: [MIDINoteContent], operationID: String, timeoutMilliseconds: Int) -> MIDIRegionOperationResult { make(.replaceNotes, operationID, target: regionID) }
+    func delete(regionID: String, confirmed: Bool, operationID: String, timeoutMilliseconds: Int) -> MIDIRegionOperationResult { make(.delete, operationID, target: regionID, undo: true) }
+    func verifyPlayback(regionID: String, operationID: String, timeoutMilliseconds: Int) -> MIDIRegionOperationResult { make(.verifyPlayback, operationID, target: regionID, playback: true) }
+
+    private func make(
+        _ action: MIDIRegionOperationAction,
+        _ operationID: String,
+        target: String? = nil,
+        created: [String] = [],
+        playback: Bool = false,
+        undo: Bool = false
+    ) -> MIDIRegionOperationResult {
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+        return MIDIRegionOperationResult(
+            protocolVersion: bridgeProtocolVersion,
+            operationID: operationID,
+            status: .succeeded,
+            reliability: .verifiedUIDriven,
+            startedAt: timestamp,
+            finishedAt: timestamp,
+            data: MIDIRegionOperationData(
+                action: action,
+                commandDispatched: action != .observe,
+                policyContext: true,
+                targetRegionID: target,
+                createdRegionIDs: created,
+                playbackVerified: playback,
+                undoAvailable: undo,
+                regions: [MIDIRegionIdentity(
+                    id: "region-a", trackID: "track-a", name: "Four Bars",
+                    position: MusicalTime(ticks: 3_840), length: MusicalTime(ticks: 15_360),
+                    notes: [MIDINoteIdentity(
+                        id: "note-a", pitch: 60, onset: MusicalTime(ticks: 0),
+                        duration: MusicalTime(ticks: 960), velocity: 100, channel: 1
+                    )],
+                    selected: true, active: true, observedAt: timestamp
+                )]
+            ),
+            evidence: [Evidence(source: "MIDI region observation", observedAt: timestamp, value: .number(1))]
+        )
+    }
+}
+
 @Test("bridge routes a versioned JSON-RPC doctor request")
 func bridgeRoutesDoctorRequest() throws {
     let request = """
@@ -425,5 +477,37 @@ func bridgeRoutesTrackRequests() throws {
         let result = try #require(response["result"] as? [String: Any])
         let data = try #require(result["data"] as? [String: Any])
         #expect(data["action"] as? String == action)
+    }
+}
+
+@Test("bridge routes MIDI region and note requests")
+func bridgeRoutesMIDIRegionRequests() throws {
+    let router = BridgeRouter(
+        doctor: Doctor(system: RouterSystem()),
+        midiRegionOperations: FixedMIDIRegionOperationsController()
+    )
+    let time = #"{"ticks":960,"ppq":960}"#
+    let zero = #"{"ticks":0,"ppq":960}"#
+    let note = #"{"pitch":60,"onset":\#(zero),"duration":\#(time),"velocity":100,"channel":1}"#
+    let requests = [
+        #"{"jsonrpc":"2.0","id":"state","method":"logic.midiRegions.state","params":{"protocolVersion":"1.0.0","operationId":"state"}}"#,
+        #"{"jsonrpc":"2.0","id":"create","method":"logic.midiRegions.create","params":{"protocolVersion":"1.0.0","operationId":"create","trackId":"track-a","name":"Four Bars","position":\#(zero),"length":{"ticks":15360,"ppq":960},"notes":[\#(note)],"timeoutMs":1000}}"#,
+        #"{"jsonrpc":"2.0","id":"rename","method":"logic.midiRegions.rename","params":{"protocolVersion":"1.0.0","operationId":"rename","regionId":"region-a","name":"Verse","timeoutMs":1000}}"#,
+        #"{"jsonrpc":"2.0","id":"move","method":"logic.midiRegions.move","params":{"protocolVersion":"1.0.0","operationId":"move","regionId":"region-a","position":\#(time),"timeoutMs":1000}}"#,
+        #"{"jsonrpc":"2.0","id":"resize","method":"logic.midiRegions.resize","params":{"protocolVersion":"1.0.0","operationId":"resize","regionId":"region-a","length":\#(time),"timeoutMs":1000}}"#,
+        #"{"jsonrpc":"2.0","id":"duplicate","method":"logic.midiRegions.duplicate","params":{"protocolVersion":"1.0.0","operationId":"duplicate","regionId":"region-a","position":\#(time),"timeoutMs":1000}}"#,
+        #"{"jsonrpc":"2.0","id":"split","method":"logic.midiRegions.split","params":{"protocolVersion":"1.0.0","operationId":"split","regionId":"region-a","position":\#(time),"timeoutMs":1000}}"#,
+        #"{"jsonrpc":"2.0","id":"update","method":"logic.midiRegions.updateNote","params":{"protocolVersion":"1.0.0","operationId":"update","regionId":"region-a","noteId":"note-a","note":\#(note),"timeoutMs":1000}}"#,
+        #"{"jsonrpc":"2.0","id":"replace","method":"logic.midiRegions.replaceNotes","params":{"protocolVersion":"1.0.0","operationId":"replace","regionId":"region-a","notes":[\#(note)],"timeoutMs":1000}}"#,
+        #"{"jsonrpc":"2.0","id":"delete","method":"logic.midiRegions.delete","params":{"protocolVersion":"1.0.0","operationId":"delete","regionId":"region-a","confirm":true,"timeoutMs":1000}}"#,
+        #"{"jsonrpc":"2.0","id":"playback","method":"logic.midiRegions.verifyPlayback","params":{"protocolVersion":"1.0.0","operationId":"playback","regionId":"region-a","timeoutMs":1000}}"#,
+    ]
+    let expected = ["observe", "create", "rename", "move", "resize", "duplicate", "split", "update_note", "replace_notes", "delete", "verify_playback"]
+    for (request, action) in zip(requests, expected) {
+        let response = try #require(JSONSerialization.jsonObject(with: router.handle(Data(request.utf8))) as? [String: Any])
+        let result = try #require(response["result"] as? [String: Any])
+        let data = try #require(result["data"] as? [String: Any])
+        #expect(data["action"] as? String == action)
+        #expect(data["exactFidelity"] as? Bool == true)
     }
 }

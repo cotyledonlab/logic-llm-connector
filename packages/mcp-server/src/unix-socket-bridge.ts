@@ -11,6 +11,9 @@ import type {
   ProjectLifecycleResult,
   TrackOperationResult,
   LogicTrackType,
+  MIDIRegionOperationResult,
+  MIDINoteContent,
+  MusicalTime,
 } from "./server.js";
 
 export interface UnixSocketLogicBridgeOptions {
@@ -165,6 +168,53 @@ export class UnixSocketLogicBridge implements LogicBridge {
     protocolVersion: "1.0.0"; operationId: string; trackId: string; confirm: boolean; timeoutMs: number;
   }): Promise<TrackOperationResult> {
     return this.#request("logic.tracks.delete", request);
+  }
+
+  midiRegionState(request: { protocolVersion: "1.0.0"; operationId: string }): Promise<MIDIRegionOperationResult> {
+    return this.#request("logic.midiRegions.state", request);
+  }
+
+  createMIDIRegion(request: {
+    protocolVersion: "1.0.0"; operationId: string; trackId: string; name: string;
+    position: MusicalTime; length: MusicalTime; notes: MIDINoteContent[]; timeoutMs: number;
+  }): Promise<MIDIRegionOperationResult> {
+    return this.#request("logic.midiRegions.create", request);
+  }
+
+  renameMIDIRegion(request: { protocolVersion: "1.0.0"; operationId: string; regionId: string; name: string; timeoutMs: number }): Promise<MIDIRegionOperationResult> {
+    return this.#request("logic.midiRegions.rename", request);
+  }
+
+  moveMIDIRegion(request: { protocolVersion: "1.0.0"; operationId: string; regionId: string; position: MusicalTime; timeoutMs: number }): Promise<MIDIRegionOperationResult> {
+    return this.#request("logic.midiRegions.move", request);
+  }
+
+  resizeMIDIRegion(request: { protocolVersion: "1.0.0"; operationId: string; regionId: string; length: MusicalTime; timeoutMs: number }): Promise<MIDIRegionOperationResult> {
+    return this.#request("logic.midiRegions.resize", request);
+  }
+
+  duplicateMIDIRegion(request: { protocolVersion: "1.0.0"; operationId: string; regionId: string; position: MusicalTime; timeoutMs: number }): Promise<MIDIRegionOperationResult> {
+    return this.#request("logic.midiRegions.duplicate", request);
+  }
+
+  splitMIDIRegion(request: { protocolVersion: "1.0.0"; operationId: string; regionId: string; position: MusicalTime; timeoutMs: number }): Promise<MIDIRegionOperationResult> {
+    return this.#request("logic.midiRegions.split", request);
+  }
+
+  updateMIDINote(request: { protocolVersion: "1.0.0"; operationId: string; regionId: string; noteId: string; note: MIDINoteContent; timeoutMs: number }): Promise<MIDIRegionOperationResult> {
+    return this.#request("logic.midiRegions.updateNote", request);
+  }
+
+  replaceMIDINotes(request: { protocolVersion: "1.0.0"; operationId: string; regionId: string; notes: MIDINoteContent[]; timeoutMs: number }): Promise<MIDIRegionOperationResult> {
+    return this.#request("logic.midiRegions.replaceNotes", request);
+  }
+
+  deleteMIDIRegion(request: { protocolVersion: "1.0.0"; operationId: string; regionId: string; confirm: boolean; timeoutMs: number }): Promise<MIDIRegionOperationResult> {
+    return this.#request("logic.midiRegions.delete", request);
+  }
+
+  verifyMIDIRegionPlayback(request: { protocolVersion: "1.0.0"; operationId: string; regionId: string; timeoutMs: number }): Promise<MIDIRegionOperationResult> {
+    return this.#request("logic.midiRegions.verifyPlayback", request);
   }
 
   #request<Result>(method: string, params: object): Promise<Result> {

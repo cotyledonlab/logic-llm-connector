@@ -40,11 +40,31 @@ const unusedTrackBridge = {
   | "duplicateTrack" | "reorderTrack" | "deleteTrack"
 >;
 
+const unusedMIDIBridge = {
+  async midiRegionState() { throw new Error("MIDI region operations are not used in this test"); },
+  async createMIDIRegion() { throw new Error("MIDI region operations are not used in this test"); },
+  async renameMIDIRegion() { throw new Error("MIDI region operations are not used in this test"); },
+  async moveMIDIRegion() { throw new Error("MIDI region operations are not used in this test"); },
+  async resizeMIDIRegion() { throw new Error("MIDI region operations are not used in this test"); },
+  async duplicateMIDIRegion() { throw new Error("MIDI region operations are not used in this test"); },
+  async splitMIDIRegion() { throw new Error("MIDI region operations are not used in this test"); },
+  async updateMIDINote() { throw new Error("MIDI region operations are not used in this test"); },
+  async replaceMIDINotes() { throw new Error("MIDI region operations are not used in this test"); },
+  async deleteMIDIRegion() { throw new Error("MIDI region operations are not used in this test"); },
+  async verifyMIDIRegionPlayback() { throw new Error("MIDI region operations are not used in this test"); },
+} satisfies Pick<
+  LogicBridge,
+  | "midiRegionState" | "createMIDIRegion" | "renameMIDIRegion" | "moveMIDIRegion"
+  | "resizeMIDIRegion" | "duplicateMIDIRegion" | "splitMIDIRegion" | "updateMIDINote"
+  | "replaceMIDINotes" | "deleteMIDIRegion" | "verifyMIDIRegionPlayback"
+>;
+
 test("an MCP client can diagnose Logic readiness", async (t) => {
   const calls: unknown[] = [];
   const bridge: LogicBridge = {
     ...unusedProjectBridge,
     ...unusedTrackBridge,
+    ...unusedMIDIBridge,
     async doctor(request) {
       calls.push(request);
       const timestamp = "2026-08-18T10:00:00.000Z";
@@ -127,6 +147,17 @@ test("an MCP client can diagnose Logic readiness", async (t) => {
     "logic_duplicate_track",
     "logic_reorder_track",
     "logic_delete_track",
+    "logic_list_midi_regions",
+    "logic_create_midi_region",
+    "logic_rename_midi_region",
+    "logic_move_midi_region",
+    "logic_duplicate_midi_region",
+    "logic_split_midi_region",
+    "logic_resize_midi_region",
+    "logic_update_midi_note",
+    "logic_replace_midi_notes",
+    "logic_delete_midi_region",
+    "logic_verify_midi_region_playback",
   ]);
 
   const result = await client.callTool({ name: "logic_doctor", arguments: {} });
@@ -158,6 +189,7 @@ test("UI inspection is absent by default and available only when enabled", async
   const bridge: LogicBridge = {
     ...unusedProjectBridge,
     ...unusedTrackBridge,
+    ...unusedMIDIBridge,
     async doctor() {
       throw new Error("doctor is not used in this test");
     },
@@ -238,6 +270,17 @@ test("UI inspection is absent by default and available only when enabled", async
     "logic_duplicate_track",
     "logic_reorder_track",
     "logic_delete_track",
+    "logic_list_midi_regions",
+    "logic_create_midi_region",
+    "logic_rename_midi_region",
+    "logic_move_midi_region",
+    "logic_duplicate_midi_region",
+    "logic_split_midi_region",
+    "logic_resize_midi_region",
+    "logic_update_midi_note",
+    "logic_replace_midi_notes",
+    "logic_delete_midi_region",
+    "logic_verify_midi_region_playback",
   ]);
   await disabledClient.close();
   await disabledServer.close();
@@ -274,6 +317,17 @@ test("UI inspection is absent by default and available only when enabled", async
     "logic_duplicate_track",
     "logic_reorder_track",
     "logic_delete_track",
+    "logic_list_midi_regions",
+    "logic_create_midi_region",
+    "logic_rename_midi_region",
+    "logic_move_midi_region",
+    "logic_duplicate_midi_region",
+    "logic_split_midi_region",
+    "logic_resize_midi_region",
+    "logic_update_midi_note",
+    "logic_replace_midi_notes",
+    "logic_delete_midi_region",
+    "logic_verify_midi_region_playback",
     "logic_inspect_ui",
   ]);
   const result = await client.callTool({
@@ -318,6 +372,7 @@ test("transport tools and resource preserve verified native outcomes", async (t)
   const bridge: LogicBridge = {
     ...unusedProjectBridge,
     ...unusedTrackBridge,
+    ...unusedMIDIBridge,
     async doctor() { throw new Error("unused"); },
     async inspectUI() { throw new Error("unused"); },
     async transportState(request) {
@@ -524,6 +579,7 @@ test("project tools preserve copied-project identity, confirmation, and cleanup 
   });
   const bridge: LogicBridge = {
     ...unusedTrackBridge,
+    ...unusedMIDIBridge,
     async doctor() { throw new Error("unused"); },
     async inspectUI() { throw new Error("unused"); },
     async transportState() { throw new Error("unused"); },
@@ -628,6 +684,7 @@ test("track tools preserve opaque identity, safety confirmation, and observed st
   const unused = async () => { throw new Error("unused"); };
   const bridge: LogicBridge = {
     ...unusedProjectBridge,
+    ...unusedMIDIBridge,
     doctor: unused,
     inspectUI: unused,
     transportState: unused,
@@ -674,4 +731,94 @@ test("track tools preserve opaque identity, safety confirmation, and observed st
   assert.ok(content && "text" in content);
   assert.equal(JSON.parse(content.text).state.tracks[0].id, "track-a");
   assert.deepEqual(calls.map(({ method }) => method), ["create", "delete", "state"]);
+});
+
+test("MIDI tools preserve explicit time, note fidelity, confirmation, and observed resources", async (t) => {
+  const calls: Array<{ method: string; request: unknown }> = [];
+  const timestamp = "2026-08-22T10:00:00.000Z";
+  const region = {
+    id: "region-a", trackId: "track-a", name: "Four Bars",
+    position: { ticks: 3840, ppq: 960 as const },
+    length: { ticks: 15360, ppq: 960 as const },
+    notes: [{
+      id: "note-a", pitch: 60,
+      onset: { ticks: 0, ppq: 960 as const },
+      duration: { ticks: 960, ppq: 960 as const },
+      velocity: 100, channel: 1,
+    }],
+    selected: true, active: true, observedAt: timestamp,
+  };
+  const makeResult = (
+    operationId: string,
+    action: "observe" | "create" | "update_note" | "delete" | "verify_playback",
+  ) => ({
+    protocolVersion: "1.0.0" as const,
+    operationId,
+    status: "succeeded" as const,
+    reliability: "verified_ui_driven" as const,
+    startedAt: timestamp,
+    finishedAt: timestamp,
+    data: {
+      action,
+      commandDispatched: action !== "observe",
+      policyContext: true,
+      ...(action === "observe" ? {} : { targetRegionId: "region-a" }),
+      createdRegionIds: action === "create" ? ["region-a"] : [],
+      exactFidelity: true,
+      fidelityDifferences: [],
+      playbackVerified: action === "verify_playback",
+      undoAvailable: action === "delete",
+      regions: action === "delete" ? [] : [region],
+    },
+    evidence: [{ source: "Logic MIDI region and event observation", observedAt: timestamp, value: { regionCount: action === "delete" ? 0 : 1 } }],
+  });
+  const bridge: LogicBridge = {
+    ...unusedProjectBridge,
+    ...unusedTrackBridge,
+    doctor: async () => { throw new Error("unused"); },
+    inspectUI: async () => { throw new Error("unused"); },
+    transportState: async () => { throw new Error("unused"); },
+    setTransportPlaying: async () => { throw new Error("unused"); },
+    moveTransportPlayhead: async () => { throw new Error("unused"); },
+    locateTransport: async () => { throw new Error("unused"); },
+    async midiRegionState(request) { calls.push({ method: "state", request }); return makeResult(request.operationId, "observe"); },
+    async createMIDIRegion(request) { calls.push({ method: "create", request }); return makeResult(request.operationId, "create"); },
+    renameMIDIRegion: async () => { throw new Error("unused"); },
+    moveMIDIRegion: async () => { throw new Error("unused"); },
+    resizeMIDIRegion: async () => { throw new Error("unused"); },
+    duplicateMIDIRegion: async () => { throw new Error("unused"); },
+    splitMIDIRegion: async () => { throw new Error("unused"); },
+    async updateMIDINote(request) { calls.push({ method: "update", request }); return makeResult(request.operationId, "update_note"); },
+    replaceMIDINotes: async () => { throw new Error("unused"); },
+    async deleteMIDIRegion(request) { calls.push({ method: "delete", request }); return makeResult(request.operationId, "delete"); },
+    async verifyMIDIRegionPlayback(request) { calls.push({ method: "playback", request }); return makeResult(request.operationId, "verify_playback"); },
+  };
+  let operation = 0;
+  const server = createLogicMcpServer({ bridge, createOperationId: () => `midi-${++operation}` });
+  const client = new Client({ name: "midi-client", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  t.after(async () => { await client.close(); await server.close(); });
+
+  const note = { pitch: 60, onset: { ticks: 0, ppq: 960 }, duration: { ticks: 960, ppq: 960 }, velocity: 100, channel: 1 };
+  const created = await client.callTool({
+    name: "logic_create_midi_region",
+    arguments: { trackId: "track-a", name: "Four Bars", position: { ticks: 3840, ppq: 960 }, length: { ticks: 15360, ppq: 960 }, notes: [note], timeoutMs: 1000 },
+  });
+  assert.equal(created.isError, undefined);
+  assert.equal((created.structuredContent as Record<string, unknown>)["exactFidelity"], true);
+
+  await client.callTool({ name: "logic_update_midi_note", arguments: { regionId: "region-a", noteId: "note-a", note, timeoutMs: 1000 } });
+  const deniedDelete = await client.callTool({ name: "logic_delete_midi_region", arguments: { regionId: "region-a", timeoutMs: 1000 } });
+  assert.equal(deniedDelete.isError, true);
+  await client.callTool({ name: "logic_delete_midi_region", arguments: { regionId: "region-a", confirm: true, timeoutMs: 1000 } });
+  const playback = await client.callTool({ name: "logic_verify_midi_region_playback", arguments: { regionId: "region-a", timeoutMs: 1000 } });
+  assert.equal((playback.structuredContent as Record<string, unknown>)["playbackVerified"], true);
+
+  const resource = await client.readResource({ uri: "logic://midi/regions/state" });
+  const content = resource.contents[0];
+  assert.ok(content && "text" in content);
+  assert.equal(JSON.parse(content.text).state.regions[0].notes[0].channel, 1);
+  assert.deepEqual(calls.map(({ method }) => method), ["create", "update", "delete", "playback", "state"]);
 });

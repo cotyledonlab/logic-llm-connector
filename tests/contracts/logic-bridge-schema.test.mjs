@@ -428,3 +428,83 @@ test("track requests and identity-bearing results are bounded and versioned", as
   response.result.data.tracks[0].position = 0;
   assert.equal(validateResponse(response), false);
 });
+
+test("MIDI region requests and fidelity-bearing results use explicit 960 PPQ time", async () => {
+  const validateRequest = await validatorFor("request");
+  const validateResponse = await validatorFor("response");
+  const time = (ticks) => ({ ticks, ppq: 960 });
+  const note = {
+    pitch: 60,
+    onset: time(0),
+    duration: time(960),
+    velocity: 100,
+    channel: 1
+  };
+  const baseParams = { protocolVersion: "1.0.0", operationId: "midi-1", timeoutMs: 10000 };
+  const requests = [
+    { jsonrpc: "2.0", id: "midi-1", method: "logic.midiRegions.state", params: { protocolVersion: "1.0.0", operationId: "midi-1" } },
+    { jsonrpc: "2.0", id: "midi-1", method: "logic.midiRegions.create", params: { ...baseParams, trackId: "track-a", name: "Four Bars", position: time(3840), length: time(15360), notes: [note] } },
+    { jsonrpc: "2.0", id: "midi-1", method: "logic.midiRegions.rename", params: { ...baseParams, regionId: "region-a", name: "Verse" } },
+    { jsonrpc: "2.0", id: "midi-1", method: "logic.midiRegions.move", params: { ...baseParams, regionId: "region-a", position: time(7680) } },
+    { jsonrpc: "2.0", id: "midi-1", method: "logic.midiRegions.resize", params: { ...baseParams, regionId: "region-a", length: time(7680) } },
+    { jsonrpc: "2.0", id: "midi-1", method: "logic.midiRegions.duplicate", params: { ...baseParams, regionId: "region-a", position: time(19200) } },
+    { jsonrpc: "2.0", id: "midi-1", method: "logic.midiRegions.split", params: { ...baseParams, regionId: "region-a", position: time(11520) } },
+    { jsonrpc: "2.0", id: "midi-1", method: "logic.midiRegions.updateNote", params: { ...baseParams, regionId: "region-a", noteId: "note-a", note } },
+    { jsonrpc: "2.0", id: "midi-1", method: "logic.midiRegions.replaceNotes", params: { ...baseParams, regionId: "region-a", notes: [note] } },
+    { jsonrpc: "2.0", id: "midi-1", method: "logic.midiRegions.delete", params: { ...baseParams, regionId: "region-a", confirm: true } },
+    { jsonrpc: "2.0", id: "midi-1", method: "logic.midiRegions.verifyPlayback", params: { ...baseParams, regionId: "region-a" } }
+  ];
+  for (const request of requests) {
+    assert.equal(validateRequest(request), true, JSON.stringify(validateRequest.errors));
+  }
+
+  const response = {
+    jsonrpc: "2.0",
+    id: "midi-1",
+    result: {
+      protocolVersion: "1.0.0",
+      operationId: "midi-1",
+      status: "partial",
+      reliability: "verified_ui_driven",
+      startedAt: "2026-08-22T10:00:00Z",
+      finishedAt: "2026-08-22T10:00:01Z",
+      data: {
+        action: "create",
+        commandDispatched: true,
+        policyContext: true,
+        targetRegionId: "region-a",
+        createdRegionIds: ["region-a"],
+        exactFidelity: false,
+        fidelityDifferences: [{
+          targetId: "note-a",
+          field: "notes[0].velocity",
+          requested: 100,
+          observed: 99,
+          reason: "Logic observed a different value"
+        }],
+        playbackVerified: false,
+        undoAvailable: false,
+        regions: [{
+          id: "region-a",
+          trackId: "track-a",
+          name: "Four Bars",
+          position: time(3840),
+          length: time(15360),
+          notes: [{ id: "note-a", ...note, velocity: 99 }],
+          selected: true,
+          active: true,
+          observedAt: "2026-08-22T10:00:01Z"
+        }],
+        failure: "postcondition_failed"
+      },
+      evidence: [{ source: "Logic MIDI region and event observation", observedAt: "2026-08-22T10:00:01Z", value: { regionCount: 1 } }]
+    }
+  };
+  assert.equal(validateResponse(response), true, JSON.stringify(validateResponse.errors));
+
+  requests[1].params.position.ppq = 480;
+  assert.equal(validateRequest(requests[1]), false);
+  requests[1].params.position.ppq = 960;
+  requests[1].params.notes[0].channel = 0;
+  assert.equal(validateRequest(requests[1]), false);
+});

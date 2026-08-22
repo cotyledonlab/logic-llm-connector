@@ -262,6 +262,103 @@
       },
       "additionalProperties": false
     },
+    "musicalTime": {
+      "type": "object",
+      "required": ["ticks", "ppq"],
+      "properties": {
+        "ticks": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "ppq": { "const": 960 }
+      },
+      "additionalProperties": false
+    },
+    "musicalDuration": {
+      "type": "object",
+      "required": ["ticks", "ppq"],
+      "properties": {
+        "ticks": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "ppq": { "const": 960 }
+      },
+      "additionalProperties": false
+    },
+    "midiNoteContent": {
+      "type": "object",
+      "required": ["pitch", "onset", "duration", "velocity", "channel"],
+      "properties": {
+        "pitch": { "type": "integer", "minimum": 0, "maximum": 127 },
+        "onset": { "$ref": "#/$defs/musicalTime" },
+        "duration": { "$ref": "#/$defs/musicalDuration" },
+        "velocity": { "type": "integer", "minimum": 1, "maximum": 127 },
+        "channel": { "type": "integer", "minimum": 1, "maximum": 16 }
+      },
+      "additionalProperties": false
+    },
+    "midiNoteIdentity": {
+      "type": "object",
+      "required": ["id", "pitch", "onset", "duration", "velocity", "channel"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "pitch": { "type": "integer", "minimum": 0, "maximum": 127 },
+        "onset": { "$ref": "#/$defs/musicalTime" },
+        "duration": { "$ref": "#/$defs/musicalDuration" },
+        "velocity": { "type": "integer", "minimum": 1, "maximum": 127 },
+        "channel": { "type": "integer", "minimum": 1, "maximum": 16 }
+      },
+      "additionalProperties": false
+    },
+    "midiRegionIdentity": {
+      "type": "object",
+      "required": ["id", "trackId", "name", "position", "length", "notes", "selected", "active", "observedAt"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "trackId": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "position": { "$ref": "#/$defs/musicalTime" },
+        "length": { "$ref": "#/$defs/musicalDuration" },
+        "notes": { "type": "array", "items": { "$ref": "#/$defs/midiNoteIdentity" }, "maxItems": 100000 },
+        "selected": { "type": "boolean" },
+        "active": { "type": "boolean" },
+        "observedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "midiFidelityDifference": {
+      "type": "object",
+      "required": ["field", "requested", "observed", "reason"],
+      "properties": {
+        "targetId": { "type": "string", "minLength": 1 },
+        "field": { "type": "string", "minLength": 1 },
+        "requested": true,
+        "observed": true,
+        "reason": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "midiRegionOperationData": {
+      "type": "object",
+      "required": ["action", "commandDispatched", "policyContext", "createdRegionIds", "exactFidelity", "fidelityDifferences", "playbackVerified", "undoAvailable", "regions"],
+      "properties": {
+        "action": { "enum": ["observe", "create", "rename", "move", "resize", "duplicate", "split", "update_note", "replace_notes", "delete", "verify_playback"] },
+        "commandDispatched": { "type": "boolean" },
+        "policyContext": { "type": "boolean" },
+        "targetRegionId": { "type": "string", "minLength": 1 },
+        "createdRegionIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "exactFidelity": { "type": "boolean" },
+        "fidelityDifferences": { "type": "array", "items": { "$ref": "#/$defs/midiFidelityDifference" } },
+        "playbackVerified": { "type": "boolean" },
+        "undoAvailable": { "type": "boolean" },
+        "regions": { "type": "array", "items": { "$ref": "#/$defs/midiRegionIdentity" } },
+        "failure": {
+          "enum": [
+            "project_policy_missing", "test_mode_inactive", "accessibility_unavailable",
+            "logic_not_running", "logic_not_focused", "track_not_found", "region_not_found",
+            "note_not_found", "invalid_musical_time", "invalid_note", "invalid_name",
+            "invalid_split_position", "confirmation_required", "dialog_presented",
+            "command_failed", "postcondition_failed", "undo_unavailable", "playback_not_observed"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "operationResult": {
       "type": "object",
       "required": [
@@ -299,7 +396,8 @@
             { "$ref": "#/$defs/transportLocationOperationData" },
             { "$ref": "#/$defs/transportLocateOperationData" },
             { "$ref": "#/$defs/projectLifecycleData" },
-            { "$ref": "#/$defs/trackOperationData" }
+            { "$ref": "#/$defs/trackOperationData" },
+            { "$ref": "#/$defs/midiRegionOperationData" }
           ]
         },
         "evidence": {
@@ -560,6 +658,61 @@
       },
       "additionalProperties": false
     },
+    "midiRegionStateRequest": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/jsonRpcId" },
+        "method": { "const": "logic.midiRegions.state" },
+        "params": {
+          "type": "object",
+          "required": ["protocolVersion", "operationId"],
+          "properties": {
+            "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+            "operationId": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "midiRegionMutationRequest": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/jsonRpcId" },
+        "method": {
+          "enum": [
+            "logic.midiRegions.create", "logic.midiRegions.rename", "logic.midiRegions.move",
+            "logic.midiRegions.resize", "logic.midiRegions.duplicate", "logic.midiRegions.split",
+            "logic.midiRegions.updateNote", "logic.midiRegions.replaceNotes",
+            "logic.midiRegions.delete", "logic.midiRegions.verifyPlayback"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "required": ["protocolVersion", "operationId", "timeoutMs"],
+          "properties": {
+            "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+            "operationId": { "type": "string", "minLength": 1 },
+            "trackId": { "type": "string", "minLength": 1 },
+            "regionId": { "type": "string", "minLength": 1 },
+            "noteId": { "type": "string", "minLength": 1 },
+            "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "position": { "$ref": "#/$defs/musicalTime" },
+            "length": { "$ref": "#/$defs/musicalDuration" },
+            "note": { "$ref": "#/$defs/midiNoteContent" },
+            "notes": { "type": "array", "items": { "$ref": "#/$defs/midiNoteContent" }, "maxItems": 10000 },
+            "confirm": { "type": "boolean" },
+            "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 30000 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "request": {
       "oneOf": [
         { "$ref": "#/$defs/doctorRequest" },
@@ -572,7 +725,9 @@
         { "$ref": "#/$defs/projectOpenRequest" },
         { "$ref": "#/$defs/projectMutationRequest" },
         { "$ref": "#/$defs/trackStateRequest" },
-        { "$ref": "#/$defs/trackMutationRequest" }
+        { "$ref": "#/$defs/trackMutationRequest" },
+        { "$ref": "#/$defs/midiRegionStateRequest" },
+        { "$ref": "#/$defs/midiRegionMutationRequest" }
       ]
     },
     "response": {

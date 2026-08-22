@@ -8,6 +8,7 @@ public enum BridgeRouterError: Error, Equatable {
     case transportUnavailable
     case projectLifecycleUnavailable
     case trackOperationsUnavailable
+    case midiRegionOperationsUnavailable
 }
 
 public enum JSONRPCID: Codable, Sendable, Equatable {
@@ -217,6 +218,43 @@ private struct TrackMutationRequest: Codable {
     let params: TrackMutationParameters
 }
 
+private struct MIDIRegionMutationParameters: Codable {
+    let protocolVersion: String
+    let operationID: String
+    let trackID: String?
+    let regionID: String?
+    let noteID: String?
+    let name: String?
+    let position: MusicalTime?
+    let length: MusicalTime?
+    let note: MIDINoteContent?
+    let notes: [MIDINoteContent]?
+    let confirm: Bool?
+    let timeoutMs: Int
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion
+        case operationID = "operationId"
+        case trackID = "trackId"
+        case regionID = "regionId"
+        case noteID = "noteId"
+        case name
+        case position
+        case length
+        case note
+        case notes
+        case confirm
+        case timeoutMs
+    }
+}
+
+private struct MIDIRegionMutationRequest: Codable {
+    let jsonrpc: String
+    let id: JSONRPCID
+    let method: String
+    let params: MIDIRegionMutationParameters
+}
+
 private struct JSONRPCResponse<Result: Codable>: Codable {
     let jsonrpc: String
     let id: JSONRPCID
@@ -230,6 +268,7 @@ public struct BridgeRouter: Sendable {
     private let transport: (any TransportControlling)?
     private let projectLifecycle: (any ProjectLifecycleControlling)?
     private let trackOperations: (any TrackOperationsControlling)?
+    private let midiRegionOperations: (any MIDIRegionOperationsControlling)?
     private let now: @Sendable () -> Date
 
     public init(
@@ -239,6 +278,7 @@ public struct BridgeRouter: Sendable {
         transport: (any TransportControlling)? = nil,
         projectLifecycle: (any ProjectLifecycleControlling)? = nil,
         trackOperations: (any TrackOperationsControlling)? = nil,
+        midiRegionOperations: (any MIDIRegionOperationsControlling)? = nil,
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.doctor = doctor
@@ -247,6 +287,7 @@ public struct BridgeRouter: Sendable {
         self.transport = transport
         self.projectLifecycle = projectLifecycle
         self.trackOperations = trackOperations
+        self.midiRegionOperations = midiRegionOperations
         self.now = now
     }
 
@@ -279,9 +320,73 @@ public struct BridgeRouter: Sendable {
             return try routeTrackState(data)
         case "logic.tracks.create", "logic.tracks.rename", "logic.tracks.select", "logic.tracks.duplicate", "logic.tracks.reorder", "logic.tracks.delete":
             return try routeTrackMutation(data, method: envelope.method)
+        case "logic.midiRegions.state":
+            return try routeMIDIRegionState(data)
+        case "logic.midiRegions.create", "logic.midiRegions.rename", "logic.midiRegions.move", "logic.midiRegions.resize", "logic.midiRegions.duplicate", "logic.midiRegions.split", "logic.midiRegions.updateNote", "logic.midiRegions.replaceNotes", "logic.midiRegions.delete", "logic.midiRegions.verifyPlayback":
+            return try routeMIDIRegionMutation(data, method: envelope.method)
         default:
             throw BridgeRouterError.unsupportedMethod(envelope.method)
         }
+    }
+
+    private func routeMIDIRegionState(_ data: Data) throws -> Data {
+        guard let midiRegionOperations else { throw BridgeRouterError.midiRegionOperationsUnavailable }
+        let request = try JSONDecoder().decode(TransportStateRequest.self, from: data)
+        try validateProtocolVersion(request.params.protocolVersion)
+        return try JSONEncoder.bridge.encode(JSONRPCResponse(
+            jsonrpc: "2.0", id: request.id,
+            result: midiRegionOperations.observe(operationID: request.params.operationID)
+        ))
+    }
+
+    private func routeMIDIRegionMutation(_ data: Data, method: String) throws -> Data {
+        guard let midiRegionOperations else { throw BridgeRouterError.midiRegionOperationsUnavailable }
+        let request = try JSONDecoder().decode(MIDIRegionMutationRequest.self, from: data)
+        try validateProtocolVersion(request.params.protocolVersion)
+        let p = request.params
+        let result: MIDIRegionOperationResult = switch method {
+        case "logic.midiRegions.create": midiRegionOperations.create(
+            trackID: try required(p.trackID), name: try required(p.name),
+            position: try required(p.position), length: try required(p.length), notes: try required(p.notes),
+            operationID: p.operationID, timeoutMilliseconds: p.timeoutMs
+        )
+        case "logic.midiRegions.rename": midiRegionOperations.rename(
+            regionID: try required(p.regionID), name: try required(p.name),
+            operationID: p.operationID, timeoutMilliseconds: p.timeoutMs
+        )
+        case "logic.midiRegions.move": midiRegionOperations.move(
+            regionID: try required(p.regionID), position: try required(p.position),
+            operationID: p.operationID, timeoutMilliseconds: p.timeoutMs
+        )
+        case "logic.midiRegions.resize": midiRegionOperations.resize(
+            regionID: try required(p.regionID), length: try required(p.length),
+            operationID: p.operationID, timeoutMilliseconds: p.timeoutMs
+        )
+        case "logic.midiRegions.duplicate": midiRegionOperations.duplicate(
+            regionID: try required(p.regionID), position: try required(p.position),
+            operationID: p.operationID, timeoutMilliseconds: p.timeoutMs
+        )
+        case "logic.midiRegions.split": midiRegionOperations.split(
+            regionID: try required(p.regionID), position: try required(p.position),
+            operationID: p.operationID, timeoutMilliseconds: p.timeoutMs
+        )
+        case "logic.midiRegions.updateNote": midiRegionOperations.updateNote(
+            regionID: try required(p.regionID), noteID: try required(p.noteID), note: try required(p.note),
+            operationID: p.operationID, timeoutMilliseconds: p.timeoutMs
+        )
+        case "logic.midiRegions.replaceNotes": midiRegionOperations.replaceNotes(
+            regionID: try required(p.regionID), notes: try required(p.notes),
+            operationID: p.operationID, timeoutMilliseconds: p.timeoutMs
+        )
+        case "logic.midiRegions.delete": midiRegionOperations.delete(
+            regionID: try required(p.regionID), confirmed: p.confirm == true,
+            operationID: p.operationID, timeoutMilliseconds: p.timeoutMs
+        )
+        default: midiRegionOperations.verifyPlayback(
+            regionID: try required(p.regionID), operationID: p.operationID, timeoutMilliseconds: p.timeoutMs
+        )
+        }
+        return try JSONEncoder.bridge.encode(JSONRPCResponse(jsonrpc: "2.0", id: request.id, result: result))
     }
 
     private func routeTrackState(_ data: Data) throws -> Data {

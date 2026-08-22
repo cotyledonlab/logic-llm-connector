@@ -178,6 +178,58 @@ export interface TrackOperationResult extends Omit<TransportStateResult, "data">
   };
 }
 
+export interface MusicalTime { ticks: number; ppq: 960 }
+export interface MIDINoteContent {
+  pitch: number;
+  onset: MusicalTime;
+  duration: MusicalTime;
+  velocity: number;
+  channel: number;
+}
+export interface MIDINoteIdentity extends MIDINoteContent { id: string }
+export interface MIDIRegionIdentity {
+  id: string;
+  trackId: string;
+  name: string;
+  position: MusicalTime;
+  length: MusicalTime;
+  notes: MIDINoteIdentity[];
+  selected: boolean;
+  active: boolean;
+  observedAt: string;
+}
+export interface MIDIFidelityDifference {
+  targetId?: string;
+  field: string;
+  requested: unknown;
+  observed: unknown;
+  reason: string;
+}
+export type MIDIRegionOperationAction =
+  | "observe" | "create" | "rename" | "move" | "resize" | "duplicate" | "split"
+  | "update_note" | "replace_notes" | "delete" | "verify_playback";
+export type MIDIRegionOperationFailure =
+  | "project_policy_missing" | "test_mode_inactive" | "accessibility_unavailable"
+  | "logic_not_running" | "logic_not_focused" | "track_not_found" | "region_not_found"
+  | "note_not_found" | "invalid_musical_time" | "invalid_note" | "invalid_name"
+  | "invalid_split_position" | "confirmation_required" | "dialog_presented"
+  | "command_failed" | "postcondition_failed" | "undo_unavailable" | "playback_not_observed";
+export interface MIDIRegionOperationResult extends Omit<TransportStateResult, "data"> {
+  data: {
+    action: MIDIRegionOperationAction;
+    commandDispatched: boolean;
+    policyContext: boolean;
+    targetRegionId?: string;
+    createdRegionIds: string[];
+    exactFidelity: boolean;
+    fidelityDifferences: MIDIFidelityDifference[];
+    playbackVerified: boolean;
+    undoAvailable: boolean;
+    regions: MIDIRegionIdentity[];
+    failure?: MIDIRegionOperationFailure;
+  };
+}
+
 export interface LogicBridge {
   doctor(request: {
     protocolVersion: typeof BRIDGE_PROTOCOL_VERSION;
@@ -270,6 +322,40 @@ export interface LogicBridge {
     protocolVersion: typeof BRIDGE_PROTOCOL_VERSION; operationId: string;
     trackId: string; confirm: boolean; timeoutMs: number;
   }): Promise<TrackOperationResult>;
+  midiRegionState(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION; operationId: string;
+  }): Promise<MIDIRegionOperationResult>;
+  createMIDIRegion(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION; operationId: string; trackId: string;
+    name: string; position: MusicalTime; length: MusicalTime; notes: MIDINoteContent[]; timeoutMs: number;
+  }): Promise<MIDIRegionOperationResult>;
+  renameMIDIRegion(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION; operationId: string; regionId: string; name: string; timeoutMs: number;
+  }): Promise<MIDIRegionOperationResult>;
+  moveMIDIRegion(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION; operationId: string; regionId: string; position: MusicalTime; timeoutMs: number;
+  }): Promise<MIDIRegionOperationResult>;
+  resizeMIDIRegion(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION; operationId: string; regionId: string; length: MusicalTime; timeoutMs: number;
+  }): Promise<MIDIRegionOperationResult>;
+  duplicateMIDIRegion(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION; operationId: string; regionId: string; position: MusicalTime; timeoutMs: number;
+  }): Promise<MIDIRegionOperationResult>;
+  splitMIDIRegion(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION; operationId: string; regionId: string; position: MusicalTime; timeoutMs: number;
+  }): Promise<MIDIRegionOperationResult>;
+  updateMIDINote(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION; operationId: string; regionId: string; noteId: string; note: MIDINoteContent; timeoutMs: number;
+  }): Promise<MIDIRegionOperationResult>;
+  replaceMIDINotes(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION; operationId: string; regionId: string; notes: MIDINoteContent[]; timeoutMs: number;
+  }): Promise<MIDIRegionOperationResult>;
+  deleteMIDIRegion(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION; operationId: string; regionId: string; confirm: boolean; timeoutMs: number;
+  }): Promise<MIDIRegionOperationResult>;
+  verifyMIDIRegionPlayback(request: {
+    protocolVersion: typeof BRIDGE_PROTOCOL_VERSION; operationId: string; regionId: string; timeoutMs: number;
+  }): Promise<MIDIRegionOperationResult>;
 }
 
 export interface LogicMcpServerDependencies {
@@ -462,6 +548,63 @@ const trackOutputSchema = z.object({
     "logic_not_running", "logic_not_focused", "track_not_found", "unsupported_track_type",
     "invalid_name", "invalid_position", "confirmation_required", "dialog_presented",
     "command_failed", "postcondition_failed", "undo_unavailable",
+  ]).optional(),
+  evidence: z.array(evidenceSchema).min(1),
+});
+
+const musicalTimeSchema = z.object({
+  ticks: z.number().int().nonnegative(),
+  ppq: z.literal(960),
+});
+const durationSchema = z.object({
+  ticks: z.number().int().positive(),
+  ppq: z.literal(960),
+});
+const midiNoteInputSchema = z.object({
+  pitch: z.number().int().min(0).max(127),
+  onset: musicalTimeSchema,
+  duration: durationSchema,
+  velocity: z.number().int().min(1).max(127),
+  channel: z.number().int().min(1).max(16),
+});
+const midiNoteIdentitySchema = midiNoteInputSchema.extend({ id: z.string().min(1) });
+const midiRegionIdentitySchema = z.object({
+  id: z.string().min(1),
+  trackId: z.string().min(1),
+  name: z.string().min(1),
+  position: musicalTimeSchema,
+  length: durationSchema,
+  notes: z.array(midiNoteIdentitySchema).max(100_000),
+  selected: z.boolean(),
+  active: z.boolean(),
+  observedAt: z.iso.datetime(),
+});
+const midiRegionOutputSchema = z.object({
+  operationId: z.string(),
+  status: z.enum(["succeeded", "partial", "failed", "cancelled", "timed_out"]),
+  reliability: z.enum(["verified_deterministic", "verified_ui_driven", "best_effort", "unsupported"]),
+  action: z.enum(["observe", "create", "rename", "move", "resize", "duplicate", "split", "update_note", "replace_notes", "delete", "verify_playback"]),
+  commandDispatched: z.boolean(),
+  policyContext: z.boolean(),
+  targetRegionId: z.string().min(1).optional(),
+  createdRegionIds: z.array(z.string().min(1)),
+  exactFidelity: z.boolean(),
+  fidelityDifferences: z.array(z.object({
+    targetId: z.string().min(1).optional(),
+    field: z.string().min(1),
+    requested: z.unknown(),
+    observed: z.unknown(),
+    reason: z.string().min(1),
+  })),
+  playbackVerified: z.boolean(),
+  undoAvailable: z.boolean(),
+  regions: z.array(midiRegionIdentitySchema),
+  failure: z.enum([
+    "project_policy_missing", "test_mode_inactive", "accessibility_unavailable",
+    "logic_not_running", "logic_not_focused", "track_not_found", "region_not_found",
+    "note_not_found", "invalid_musical_time", "invalid_note", "invalid_name",
+    "invalid_split_position", "confirmation_required", "dialog_presented",
+    "command_failed", "postcondition_failed", "undo_unavailable", "playback_not_observed",
   ]).optional(),
   evidence: z.array(evidenceSchema).min(1),
 });
@@ -925,6 +1068,143 @@ export function createLogicMcpServer({
     })),
   );
 
+  const midiResponse = (result: MIDIRegionOperationResult) => {
+    const structuredContent = {
+      operationId: result.operationId,
+      status: result.status,
+      reliability: result.reliability,
+      ...result.data,
+      evidence: result.evidence,
+    };
+    const detail = result.data.failure ? `: ${result.data.failure}` : "";
+    return {
+      content: [{
+        type: "text" as const,
+        text: `Logic MIDI regions ${result.data.action} ${result.status}${detail}; observed ${result.data.regions.length} region(s), exact fidelity ${result.data.exactFidelity}.`,
+      }],
+      structuredContent,
+    };
+  };
+  const midiIdInput = z.string().min(1);
+  const midiNameInput = z.string().trim().min(1).max(128);
+  const midiTimeoutInput = z.number().int().min(100).max(30_000).default(10_000);
+  const midiNotesInput = z.array(midiNoteInputSchema).max(10_000);
+
+  server.registerTool(
+    "logic_list_midi_regions",
+    {
+      title: "Inspect Logic MIDI regions",
+      description: "Observe opaque MIDI region and note identities with exact 960-PPQ positions, lengths, pitch, velocity, and channel.",
+      inputSchema: z.object({}), outputSchema: midiRegionOutputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async () => midiResponse(await bridge.midiRegionState({ protocolVersion: BRIDGE_PROTOCOL_VERSION, operationId: createOperationId() })),
+  );
+
+  server.registerTool(
+    "logic_create_midi_region",
+    {
+      title: "Create a Logic MIDI region",
+      description: "Import deterministic MIDI content onto a supported track in the managed Test Project and report every observed fidelity difference.",
+      inputSchema: z.object({ trackId: midiIdInput, name: midiNameInput, position: musicalTimeSchema, length: durationSchema, notes: midiNotesInput, timeoutMs: midiTimeoutInput }),
+      outputSchema: midiRegionOutputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ trackId, name, position, length, notes, timeoutMs }) => midiResponse(await bridge.createMIDIRegion({
+      protocolVersion: BRIDGE_PROTOCOL_VERSION, operationId: createOperationId(), trackId, name, position, length, notes, timeoutMs,
+    })),
+  );
+
+  server.registerTool(
+    "logic_rename_midi_region",
+    {
+      title: "Rename a Logic MIDI region",
+      description: "Rename an opaque MIDI region identity and verify the observed name.",
+      inputSchema: z.object({ regionId: midiIdInput, name: midiNameInput, timeoutMs: midiTimeoutInput }), outputSchema: midiRegionOutputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ regionId, name, timeoutMs }) => midiResponse(await bridge.renameMIDIRegion({ protocolVersion: BRIDGE_PROTOCOL_VERSION, operationId: createOperationId(), regionId, name, timeoutMs })),
+  );
+
+  for (const operation of ["move", "duplicate", "split"] as const) {
+    const names = {
+      move: ["logic_move_midi_region", "Move a Logic MIDI region"],
+      duplicate: ["logic_duplicate_midi_region", "Duplicate a Logic MIDI region"],
+      split: ["logic_split_midi_region", "Split a Logic MIDI region"],
+    } as const;
+    server.registerTool(
+      names[operation][0],
+      {
+        title: names[operation][1],
+        description: `${names[operation][1]} at an absolute 960-PPQ project position and verify region identity and content.`,
+        inputSchema: z.object({ regionId: midiIdInput, position: musicalTimeSchema, timeoutMs: midiTimeoutInput }), outputSchema: midiRegionOutputSchema,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: operation === "move", openWorldHint: false },
+      },
+      async ({ regionId, position, timeoutMs }) => {
+        const request = { protocolVersion: BRIDGE_PROTOCOL_VERSION, operationId: createOperationId(), regionId, position, timeoutMs };
+        const result = operation === "move" ? await bridge.moveMIDIRegion(request)
+          : operation === "duplicate" ? await bridge.duplicateMIDIRegion(request)
+          : await bridge.splitMIDIRegion(request);
+        return midiResponse(result);
+      },
+    );
+  }
+
+  server.registerTool(
+    "logic_resize_midi_region",
+    {
+      title: "Resize a Logic MIDI region",
+      description: "Set a MIDI region length in 960-PPQ ticks and verify the observed boundary.",
+      inputSchema: z.object({ regionId: midiIdInput, length: durationSchema, timeoutMs: midiTimeoutInput }), outputSchema: midiRegionOutputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ regionId, length, timeoutMs }) => midiResponse(await bridge.resizeMIDIRegion({ protocolVersion: BRIDGE_PROTOCOL_VERSION, operationId: createOperationId(), regionId, length, timeoutMs })),
+  );
+
+  server.registerTool(
+    "logic_update_midi_note",
+    {
+      title: "Update a Logic MIDI note",
+      description: "Replace pitch, region-relative onset, duration, velocity, and channel for one opaque Note identity.",
+      inputSchema: z.object({ regionId: midiIdInput, noteId: midiIdInput, note: midiNoteInputSchema, timeoutMs: midiTimeoutInput }), outputSchema: midiRegionOutputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ regionId, noteId, note, timeoutMs }) => midiResponse(await bridge.updateMIDINote({ protocolVersion: BRIDGE_PROTOCOL_VERSION, operationId: createOperationId(), regionId, noteId, note, timeoutMs })),
+  );
+
+  server.registerTool(
+    "logic_replace_midi_notes",
+    {
+      title: "Replace all notes in a Logic MIDI region",
+      description: "Bulk-replace a region's notes through deterministic MIDI interchange and report field-level fidelity differences.",
+      inputSchema: z.object({ regionId: midiIdInput, notes: midiNotesInput, timeoutMs: midiTimeoutInput }), outputSchema: midiRegionOutputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ regionId, notes, timeoutMs }) => midiResponse(await bridge.replaceMIDINotes({ protocolVersion: BRIDGE_PROTOCOL_VERSION, operationId: createOperationId(), regionId, notes, timeoutMs })),
+  );
+
+  server.registerTool(
+    "logic_delete_midi_region",
+    {
+      title: "Delete a Logic MIDI region",
+      description: "Delete an opaque MIDI region in the managed Test Project and verify removal plus Undo availability.",
+      inputSchema: z.object({ regionId: midiIdInput, confirm: z.literal(true), timeoutMs: midiTimeoutInput }), outputSchema: midiRegionOutputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ regionId, timeoutMs }) => midiResponse(await bridge.deleteMIDIRegion({ protocolVersion: BRIDGE_PROTOCOL_VERSION, operationId: createOperationId(), regionId, confirm: true, timeoutMs })),
+  );
+
+  server.registerTool(
+    "logic_verify_midi_region_playback",
+    {
+      title: "Verify a Logic MIDI region in playback",
+      description: "Locate and play an active MIDI region, then verify arrangement playback feedback without claiming audible output.",
+      inputSchema: z.object({ regionId: midiIdInput, timeoutMs: midiTimeoutInput }), outputSchema: midiRegionOutputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ regionId, timeoutMs }) => midiResponse(await bridge.verifyMIDIRegionPlayback({ protocolVersion: BRIDGE_PROTOCOL_VERSION, operationId: createOperationId(), regionId, timeoutMs })),
+  );
+
   server.registerResource(
     "logic_transport_state",
     "logic://transport/state",
@@ -1006,6 +1286,23 @@ export function createLogicMcpServer({
           state: result.data,
           evidence: result.evidence,
         }),
+      }] };
+    },
+  );
+
+  server.registerResource(
+    "logic_midi_regions_state",
+    "logic://midi/regions/state",
+    {
+      title: "Logic MIDI regions state",
+      description: "Observed MIDI region and Note identities, musical time, content, activity, and fidelity context.",
+      mimeType: "application/json",
+    },
+    async (uri) => {
+      const result = await bridge.midiRegionState({ protocolVersion: BRIDGE_PROTOCOL_VERSION, operationId: createOperationId() });
+      return { contents: [{
+        uri: uri.href, mimeType: "application/json",
+        text: JSON.stringify({ operationId: result.operationId, status: result.status, reliability: result.reliability, state: result.data, evidence: result.evidence }),
       }] };
     },
   );

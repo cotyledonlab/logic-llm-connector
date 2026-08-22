@@ -153,6 +153,17 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
     "logic_duplicate_track",
     "logic_reorder_track",
     "logic_delete_track",
+    "logic_list_midi_regions",
+    "logic_create_midi_region",
+    "logic_rename_midi_region",
+    "logic_move_midi_region",
+    "logic_duplicate_midi_region",
+    "logic_split_midi_region",
+    "logic_resize_midi_region",
+    "logic_update_midi_note",
+    "logic_replace_midi_notes",
+    "logic_delete_midi_region",
+    "logic_verify_midi_region_playback",
   ]);
   const mcpResult = await client.callTool({ name: "logic_doctor", arguments: {} });
   assert.equal(mcpResult.isError, undefined);
@@ -324,6 +335,17 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
     "logic_duplicate_track",
     "logic_reorder_track",
     "logic_delete_track",
+    "logic_list_midi_regions",
+    "logic_create_midi_region",
+    "logic_rename_midi_region",
+    "logic_move_midi_region",
+    "logic_duplicate_midi_region",
+    "logic_split_midi_region",
+    "logic_resize_midi_region",
+    "logic_update_midi_note",
+    "logic_replace_midi_notes",
+    "logic_delete_midi_region",
+    "logic_verify_midi_region_playback",
     "logic_inspect_ui",
   ]);
   const inspection = await diagnosticClient.callTool({
