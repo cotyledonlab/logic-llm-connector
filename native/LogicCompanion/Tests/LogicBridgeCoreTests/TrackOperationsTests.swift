@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 
@@ -239,4 +240,111 @@ func trackOperationsRejectInvalidInputs() {
     #expect(reorder.data.failure == .invalidPosition)
     #expect(!rename.data.commandDispatched)
     #expect(!reorder.data.commandDispatched)
+}
+
+@Test(
+    "real Logic track operations preserve identity inside the packaged harness copy",
+    .enabled(if:
+        ProcessInfo.processInfo.environment["LOGIC_TRACK_INTEGRATION_TEST"] == "1" &&
+        ProcessInfo.processInfo.environment["LOGIC_MANAGED_TEST_PROJECT_PATH"] != nil
+    )
+)
+func realLogicTrackOperationsPreserveIdentityInsidePackagedCopy() throws {
+    let managedPath = try #require(ProcessInfo.processInfo.environment["LOGIC_MANAGED_TEST_PROJECT_PATH"])
+    let projectScripting = MacLogicProjectScripting()
+    let observedProject = try #require(try projectScripting.observe())
+    #expect(URL(fileURLWithPath: observedProject.path).standardizedFileURL.path ==
+        URL(fileURLWithPath: managedPath).standardizedFileURL.path)
+
+    let logic = try #require(
+        NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.logic10").first
+    )
+    let logicProcessIdentifier = logic.processIdentifier
+    if NSWorkspace.shared.frontmostApplication?.processIdentifier != logic.processIdentifier {
+        _ = logic.activate()
+        Thread.sleep(forTimeInterval: 0.5)
+    }
+    #expect(NSWorkspace.shared.frontmostApplication?.processIdentifier == logic.processIdentifier)
+    let controller = TrackOperationsController(
+        policyContextReady: {
+            guard let project = try? projectScripting.observe() else { return false }
+            return URL(fileURLWithPath: project.path).standardizedFileURL.path ==
+                URL(fileURLWithPath: managedPath).standardizedFileURL.path
+        },
+        testModeReady: { true }
+    )
+    let initial = controller.observe(operationID: "track-real-initial")
+    #expect(initial.status == .succeeded)
+    #expect(initial.data.tracks.count >= 1)
+    let initialCount = initial.data.tracks.count
+
+    var createdIDs: [String] = []
+    for (type, name) in [
+        (LogicTrackType.softwareInstrument, "LLM Instrument"),
+        (.audio, "LLM Audio"),
+        (.externalMIDI, "LLM External MIDI"),
+    ] {
+        let created = controller.create(
+            type: type,
+            name: name,
+            operationID: "track-real-create-\(type.rawValue)",
+            timeoutMilliseconds: 10_000
+        )
+        #expect(created.status == .succeeded, Comment(rawValue: String(describing: created)))
+        let id = try #require(created.data.targetTrackID)
+        createdIDs.append(id)
+        #expect(created.data.tracks.contains(where: {
+            $0.id == id && $0.type == type && $0.name == name && $0.selected
+        }))
+        Thread.sleep(forTimeInterval: 0.5)
+    }
+
+    let selectedTrackID = try #require(createdIDs.last)
+    let selected = controller.select(
+        trackID: selectedTrackID,
+        operationID: "track-real-select",
+        timeoutMilliseconds: 10_000
+    )
+    #expect(selected.status == .succeeded)
+    #expect(selected.data.tracks.first(where: { $0.id == selectedTrackID })?.selected == true)
+    Thread.sleep(forTimeInterval: 0.5)
+
+    let sourceID = try #require(createdIDs.dropFirst().first)
+    let duplicated = controller.duplicate(
+        trackID: sourceID,
+        name: "LLM Audio Copy",
+        operationID: "track-real-duplicate",
+        timeoutMilliseconds: 10_000
+    )
+    #expect(duplicated.status == .succeeded, Comment(rawValue: String(describing: duplicated)))
+    let duplicateID = try #require(duplicated.data.targetTrackID)
+    #expect(duplicateID != sourceID)
+    #expect(duplicated.data.tracks.contains(where: { $0.id == sourceID }))
+    Thread.sleep(forTimeInterval: 0.5)
+
+    let reordered = controller.reorder(
+        trackID: duplicateID,
+        position: 1,
+        operationID: "track-real-reorder",
+        timeoutMilliseconds: 10_000
+    )
+    #expect(reordered.status == .succeeded, Comment(rawValue: String(describing: reordered)))
+    #expect(reordered.data.tracks.first?.id == duplicateID)
+    #expect(reordered.data.tracks.contains(where: { $0.id == sourceID }))
+    Thread.sleep(forTimeInterval: 0.5)
+
+    let deleted = controller.delete(
+        trackID: duplicateID,
+        confirmed: true,
+        operationID: "track-real-delete",
+        timeoutMilliseconds: 10_000
+    )
+    #expect(deleted.status == .succeeded, Comment(rawValue: String(describing: deleted)))
+    #expect(deleted.data.undoAvailable)
+    #expect(!deleted.data.tracks.contains(where: { $0.id == duplicateID }))
+    #expect(deleted.data.tracks.count == initialCount + 3)
+    Thread.sleep(forTimeInterval: 1.0)
+    #expect(!logic.isTerminated)
+    #expect(NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.logic10")
+        .contains(where: { $0.processIdentifier == logicProcessIdentifier }))
 }

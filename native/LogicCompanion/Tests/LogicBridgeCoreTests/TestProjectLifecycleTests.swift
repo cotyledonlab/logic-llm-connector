@@ -8,6 +8,7 @@ private final class FakeProjectScripting: LogicProjectScripting, @unchecked Send
     private var current: LogicProjectIdentity?
     var openError: LogicProjectScriptingError?
     var publishOpenIdentity = true
+    var ignoredCloseAttempts = 0
     var openedPaths: [String] = []
     var closeCount = 0
 
@@ -49,7 +50,7 @@ private final class FakeProjectScripting: LogicProjectScripting, @unchecked Send
     func closeWithoutSaving(projectAt _: URL) throws {
         lock.withLock {
             closeCount += 1
-            current = nil
+            if closeCount > ignoredCloseAttempts { current = nil }
         }
     }
 
@@ -134,6 +135,27 @@ func testProjectLifecycleHappyPath() throws {
     let cleaned = fixture.controller.cleanup(operationID: "cleanup-1", timeoutMilliseconds: 10)
     #expect(cleaned.status == .succeeded)
     #expect(cleaned.data.cleanupPerformed)
+    #expect(!FileManager.default.fileExists(atPath: managedPath))
+}
+
+@Test("cleanup retries one ignored close command for the exact managed project")
+func testProjectCleanupRetriesIgnoredClose() throws {
+    let scripting = FakeProjectScripting()
+    scripting.ignoredCloseAttempts = 1
+    let fixture = try LifecycleFixture(scripting: scripting)
+    defer { fixture.remove() }
+    let opened = fixture.controller.openFixture(
+        at: fixture.source.path,
+        operationID: "open-retry",
+        timeoutMilliseconds: 10
+    )
+    let managedPath = try #require(opened.data.managedProjectPath)
+
+    let cleaned = fixture.controller.cleanup(operationID: "cleanup-retry", timeoutMilliseconds: 10)
+
+    #expect(cleaned.status == .succeeded)
+    #expect(cleaned.data.cleanupPerformed)
+    #expect(scripting.closeCount == 2)
     #expect(!FileManager.default.fileExists(atPath: managedPath))
 }
 

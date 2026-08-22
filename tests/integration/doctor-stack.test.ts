@@ -14,6 +14,8 @@ const companionPath = join(
   "build/Logic Companion.app/Contents/MacOS/logic-companion",
 );
 const projectAcceptanceEnabled = process.env["LOGIC_PROJECT_INTEGRATION_TEST"] === "1";
+const trackAcceptanceEnabled = process.env["LOGIC_TRACK_INTEGRATION_TEST"] === "1";
+const isolatedAcceptanceEnabled = projectAcceptanceEnabled || trackAcceptanceEnabled;
 
 async function waitForSocket(path: string): Promise<void> {
   const deadline = Date.now() + 5_000;
@@ -54,7 +56,7 @@ async function waitForMackieAcceptance(
 }
 
 test("TypeScript diagnoses the running Logic instance through the native socket", {
-  skip: projectAcceptanceEnabled ? "isolated project lifecycle acceptance requested" : false,
+  skip: isolatedAcceptanceEnabled ? "isolated project or track acceptance requested" : false,
 }, async (t) => {
   const socketPath = `/tmp/logic-llm-connector-${process.pid}.sock`;
   await rm(socketPath, { force: true });
@@ -340,8 +342,8 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
   assert.equal(nodes[0]?.["description"], undefined);
 });
 
-test("MCP safely opens, saves, closes, reopens, and cleans a copied Test Project", {
-  skip: projectAcceptanceEnabled ? false : "set LOGIC_PROJECT_INTEGRATION_TEST=1",
+test("MCP safely owns a copied Test Project through lifecycle and optional track acceptance", {
+  skip: isolatedAcceptanceEnabled ? false : "set LOGIC_PROJECT_INTEGRATION_TEST=1 or LOGIC_TRACK_INTEGRATION_TEST=1",
   timeout: 120_000,
 }, async (t) => {
   const fixturePath = process.env["LOGIC_TEST_PROJECT_FIXTURE"];
@@ -364,7 +366,7 @@ test("MCP safely opens, saves, closes, reopens, and cleans a copied Test Project
   // Let that startup work settle before dispatching the first document command.
   await new Promise((resolve) => setTimeout(resolve, 1_000));
 
-  const nativeBridge = new UnixSocketLogicBridge({ socketPath, timeoutMs: 35_000 });
+  const nativeBridge = new UnixSocketLogicBridge({ socketPath, timeoutMs: 65_000 });
   const initial = await nativeBridge.projectState({
     protocolVersion: "1.0.0",
     operationId: "project-precondition",
@@ -431,6 +433,59 @@ test("MCP safely opens, saves, closes, reopens, and cleans a copied Test Project
     const reopened = await call("logic_reopen_test_project", { timeoutMs: 30_000 });
     assert.equal(reopened["status"], "succeeded", JSON.stringify(reopened));
     assert.equal((reopened["project"] as Record<string, unknown>)["path"], managedPath);
+
+    if (trackAcceptanceEnabled) {
+      const trackAcceptance = spawnSync(
+        "swift",
+        [
+          "test",
+          "--package-path",
+          "native/LogicCompanion",
+          "--filter",
+          "LogicBridgeCoreTests.realLogicTrackOperationsPreserveIdentityInsidePackagedCopy",
+        ],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            LOGIC_TRACK_INTEGRATION_TEST: "1",
+            LOGIC_MANAGED_TEST_PROJECT_PATH: managedPath,
+          },
+          encoding: "utf8",
+          timeout: 120_000,
+        },
+      );
+      assert.equal(
+        trackAcceptance.status,
+        0,
+        `real-Logic track acceptance failed:\n${trackAcceptance.stdout}\n${trackAcceptance.stderr}`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      const postTrackProject = await nativeBridge.projectState({
+        protocolVersion: "1.0.0",
+        operationId: "project-post-track-acceptance",
+      });
+      assert.equal(postTrackProject.status, "succeeded", JSON.stringify(postTrackProject));
+      assert.equal(postTrackProject.data.project?.path, managedPath);
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      const savedAfterTracks = await call("logic_save_test_project", { confirm: true, timeoutMs: 30_000 });
+      assert.equal(savedAfterTracks["status"], "succeeded", JSON.stringify(savedAfterTracks));
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      let settledProject = await nativeBridge.projectState({
+        protocolVersion: "1.0.0",
+        operationId: "project-post-track-save",
+      });
+      if (settledProject.data.project?.modified) {
+        const resavedAfterTracks = await call("logic_save_test_project", { confirm: true, timeoutMs: 30_000 });
+        assert.equal(resavedAfterTracks["status"], "succeeded", JSON.stringify(resavedAfterTracks));
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        settledProject = await nativeBridge.projectState({
+          protocolVersion: "1.0.0",
+          operationId: "project-post-track-resave",
+        });
+      }
+      assert.equal(settledProject.data.project?.modified, false, JSON.stringify(settledProject));
+    }
   } finally {
     const cleaned = await cleanup();
     assert.equal(cleaned["status"], "succeeded", JSON.stringify(cleaned));

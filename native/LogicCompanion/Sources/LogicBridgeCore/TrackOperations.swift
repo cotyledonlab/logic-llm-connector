@@ -124,7 +124,9 @@ public final class TrackOperationsController: TrackOperationsControlling, @unche
             try scripting.select(trackID: trackID)
             guard let after = waitFor(timeoutMilliseconds: timeoutMilliseconds, condition: {
                 let tracks = try? scripting.observeTracks()
-                return tracks?.first(where: { $0.id == trackID })?.selected == true ? tracks : nil
+                if tracks?.first(where: { $0.id == trackID })?.selected == true { return tracks }
+                try? scripting.select(trackID: trackID)
+                return nil
             }) else { return nil }
             return MutationPostcondition(tracks: after, targetTrackID: trackID)
         }
@@ -410,6 +412,7 @@ public final class MacLogicTrackScripting: LogicTrackScripting, @unchecked Senda
 
     private let lock = NSLock()
     private var records: [Record] = []
+    private var pendingCreatedTrackType: LogicTrackType?
 
     public init() {}
 
@@ -417,17 +420,43 @@ public final class MacLogicTrackScripting: LogicTrackScripting, @unchecked Senda
         try lock.withLock {
             let application = try logicApplication(requireFocus: false)
             try rejectModal(application)
-            let headers = descendants(of: application, maximum: 12_000).compactMap(parseHeader).sorted { $0.position < $1.position }
+            var uniqueHeaders: [Header] = []
+            for header in descendants(of: application, maximum: 12_000).compactMap(parseHeader) {
+                if !uniqueHeaders.contains(where: { CFEqual($0.element, header.element) }) {
+                    uniqueHeaders.append(header)
+                }
+            }
+            let rawHeaders = uniqueHeaders.sorted {
+                if $0.position > 0, $1.position > 0 { return $0.position < $1.position }
+                return (frame($0.element)?.minY ?? .greatestFiniteMagnitude)
+                    < (frame($1.element)?.minY ?? .greatestFiniteMagnitude)
+            }
+            let headers = rawHeaders.enumerated().map { offset, header in
+                Header(
+                    element: header.element,
+                    position: offset + 1,
+                    name: header.name,
+                    selected: header.selected
+                )
+            }
             let selectedType = classifySelectedTrack(in: application)
             var unmatchedRecords = records
             var nextRecords: [Record] = []
+            var consumedPendingType = false
             let observedAt = Date()
             let tracks = headers.map { header -> LogicTrackIdentity in
-                let fallbackMatches = unmatchedRecords.indices.filter {
+                let nameMatches = unmatchedRecords.indices.filter {
+                    unmatchedRecords[$0].name == header.name
+                }
+                let positionMatches = nameMatches.filter {
                     unmatchedRecords[$0].name == header.name && unmatchedRecords[$0].position == header.position
                 }
-                let matchingIndex = unmatchedRecords.firstIndex(where: { CFEqual($0.element, header.element) })
-                    ?? (fallbackMatches.count == 1 ? fallbackMatches[0] : nil)
+                let matchingIndex = unmatchedRecords.firstIndex(where: {
+                    CFEqual($0.element, header.element) && $0.name == header.name
+                })
+                    ?? (nameMatches.count == 1 ? nameMatches[0] : nil)
+                    ?? (positionMatches.count == 1 ? positionMatches[0] : nil)
+                    ?? unmatchedRecords.firstIndex(where: { CFEqual($0.element, header.element) })
                 var record: Record
                 if let matchingIndex {
                     record = unmatchedRecords.remove(at: matchingIndex)
@@ -440,10 +469,11 @@ public final class MacLogicTrackScripting: LogicTrackScripting, @unchecked Senda
                         element: header.element,
                         name: header.name,
                         position: header.position,
-                        type: .unknown
+                        type: header.selected ? (pendingCreatedTrackType ?? .unknown) : .unknown
                     )
+                    consumedPendingType = header.selected && pendingCreatedTrackType != nil
                 }
-                if header.selected, let selectedType { record.type = selectedType }
+                if header.selected, record.type == .unknown, let selectedType { record.type = selectedType }
                 nextRecords.append(record)
                 return LogicTrackIdentity(
                     id: record.id,
@@ -455,6 +485,7 @@ public final class MacLogicTrackScripting: LogicTrackScripting, @unchecked Senda
                 )
             }
             records = nextRecords
+            if consumedPendingType { pendingCreatedTrackType = nil }
             return tracks
         }
     }
@@ -466,25 +497,71 @@ public final class MacLogicTrackScripting: LogicTrackScripting, @unchecked Senda
         case .externalMIDI: "New External MIDI Track"
         case .unknown: throw LogicTrackScriptingError.unsupportedTrackType
         }
-        try performMenuItem(menu: "Track", title: title)
+        lock.withLock { pendingCreatedTrackType = type }
+        do {
+            try performMenuItem(menu: "Track", title: title)
+        } catch {
+            lock.withLock { pendingCreatedTrackType = nil }
+            throw error
+        }
     }
 
     public func rename(trackID: String, name: String) throws {
+        try select(trackID: trackID)
         try lock.withLock {
+            let application = try logicApplication(requireFocus: true)
             let record = try record(trackID)
             guard let field = descendants(of: record.element, maximum: 100).first(where: {
                 attributeString($0, kAXRoleAttribute) == kAXTextFieldRole &&
                     (attributeString($0, kAXHelpAttribute)?.contains("Name field") == true)
-            }) else { throw LogicTrackScriptingError.commandFailed }
-            guard AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, name as CFTypeRef) == .success else {
+            }), let fieldFrame = frame(field) else { throw LogicTrackScriptingError.commandFailed }
+            let point = CGPoint(x: fieldFrame.midX, y: fieldFrame.midY)
+            for clickCount in 1 ... 2 {
+                guard let down = CGEvent(
+                    mouseEventSource: nil,
+                    mouseType: .leftMouseDown,
+                    mouseCursorPosition: point,
+                    mouseButton: .left
+                ), let up = CGEvent(
+                    mouseEventSource: nil,
+                    mouseType: .leftMouseUp,
+                    mouseCursorPosition: point,
+                    mouseButton: .left
+                ) else { throw LogicTrackScriptingError.commandFailed }
+                down.setIntegerValueField(.mouseEventClickState, value: Int64(clickCount))
+                up.setIntegerValueField(.mouseEventClickState, value: Int64(clickCount))
+                down.post(tap: .cghidEventTap)
+                up.post(tap: .cghidEventTap)
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+            guard let editor = focusedUIElement(application),
+                  attributeString(editor, kAXRoleAttribute) == kAXTextFieldRole,
+                  attributeString(editor, kAXValueAttribute) != nil else {
                 throw LogicTrackScriptingError.commandFailed
             }
-            bind(trackID: trackID, toSelectedIn: try logicApplication(requireFocus: false), name: name)
+            guard AXUIElementSetAttributeValue(
+                editor,
+                kAXFocusedAttribute as CFString,
+                kCFBooleanTrue
+            ) == .success,
+                  AXUIElementSetAttributeValue(editor, kAXValueAttribute as CFString, name as CFTypeRef) == .success else {
+                throw LogicTrackScriptingError.commandFailed
+            }
+            guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: 36, keyDown: true),
+                  let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: 36, keyDown: false) else {
+                throw LogicTrackScriptingError.commandFailed
+            }
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
+            Thread.sleep(forTimeInterval: 0.05)
+            bind(trackID: trackID, toSelectedIn: application, name: name)
         }
     }
 
     public func select(trackID: String) throws {
         try lock.withLock {
+            let application = try logicApplication(requireFocus: true)
+            try rejectModal(application)
             let record = try record(trackID)
             guard let focus = descendants(of: record.element, maximum: 100).first(where: {
                 attributeString($0, kAXRoleAttribute) == kAXRadioButtonRole &&
@@ -492,15 +569,27 @@ public final class MacLogicTrackScripting: LogicTrackScripting, @unchecked Senda
             }), AXUIElementPerformAction(focus, kAXPressAction as CFString) == .success else {
                 throw LogicTrackScriptingError.commandFailed
             }
+            Thread.sleep(forTimeInterval: 0.1)
+            _ = AXUIElementPerformAction(focus, kAXPressAction as CFString)
+            Thread.sleep(forTimeInterval: 0.5)
+            _ = AXUIElementPerformAction(focus, kAXPressAction as CFString)
         }
     }
 
     public func duplicate(trackID: String) throws {
+        let sourceType = try lock.withLock { try record(trackID).type }
         try select(trackID: trackID)
-        try performMenuItem(menu: "Track", title: "New Track With Duplicate Settings")
+        lock.withLock { pendingCreatedTrackType = sourceType }
+        do {
+            try performMenuItem(menu: "Track", title: "New Track With Duplicate Settings")
+        } catch {
+            lock.withLock { pendingCreatedTrackType = nil }
+            throw error
+        }
     }
 
     public func reorder(trackID: String, position: Int) throws {
+        try select(trackID: trackID)
         try lock.withLock {
             let application = try logicApplication(requireFocus: true)
             try rejectModal(application)
@@ -512,20 +601,36 @@ public final class MacLogicTrackScripting: LogicTrackScripting, @unchecked Senda
             guard let sourceFrame = frame(record.element), let targetFrame = frame(target.element) else {
                 throw LogicTrackScriptingError.commandFailed
             }
-            let x = sourceFrame.maxX - min(12, sourceFrame.width / 4)
+            let x = sourceFrame.minX + (sourceFrame.width * 0.72)
             let sourcePoint = CGPoint(x: x, y: sourceFrame.midY)
             let targetY = record.position < position ? targetFrame.maxY - 2 : targetFrame.minY + 2
             let targetPoint = CGPoint(x: x, y: targetY)
-            guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: sourcePoint, mouseButton: .left),
-                  let drag = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDragged, mouseCursorPosition: targetPoint, mouseButton: .left),
-                  let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: targetPoint, mouseButton: .left) else {
+            guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: sourcePoint, mouseButton: .left) else {
                 throw LogicTrackScriptingError.commandFailed
             }
             down.post(tap: .cghidEventTap)
-            Thread.sleep(forTimeInterval: 0.08)
-            drag.post(tap: .cghidEventTap)
-            Thread.sleep(forTimeInterval: 0.08)
+            Thread.sleep(forTimeInterval: 0.15)
+            for step in 1 ... 12 {
+                let progress = CGFloat(step) / 12
+                let point = CGPoint(
+                    x: sourcePoint.x + ((targetPoint.x - sourcePoint.x) * progress),
+                    y: sourcePoint.y + ((targetPoint.y - sourcePoint.y) * progress)
+                )
+                guard let drag = CGEvent(
+                    mouseEventSource: nil,
+                    mouseType: .leftMouseDragged,
+                    mouseCursorPosition: point,
+                    mouseButton: .left
+                ) else { throw LogicTrackScriptingError.commandFailed }
+                drag.post(tap: .cghidEventTap)
+                Thread.sleep(forTimeInterval: 0.03)
+            }
+            Thread.sleep(forTimeInterval: 0.15)
+            guard let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: targetPoint, mouseButton: .left) else {
+                throw LogicTrackScriptingError.commandFailed
+            }
             up.post(tap: .cghidEventTap)
+            Thread.sleep(forTimeInterval: 0.1)
         }
     }
 
@@ -541,9 +646,7 @@ public final class MacLogicTrackScripting: LogicTrackScripting, @unchecked Senda
                 (attributeString($0, kAXTitleAttribute)?.hasPrefix("Undo Delete Track") == true)
         }) else { return false }
         let enabled = attributeBool(item, kAXEnabledAttribute) == true
-        if let menuBarItem = menuBarItem(application: application, title: "Edit") {
-            _ = AXUIElementPerformAction(menuBarItem, kAXPressAction as CFString)
-        }
+        dismissOpenMenu()
         return enabled
     }
 
@@ -558,6 +661,15 @@ public final class MacLogicTrackScripting: LogicTrackScripting, @unchecked Senda
         }), AXUIElementPerformAction(item, kAXPressAction as CFString) == .success else {
             throw LogicTrackScriptingError.commandFailed
         }
+        Thread.sleep(forTimeInterval: 0.05)
+        dismissOpenMenu()
+    }
+
+    private func dismissOpenMenu() {
+        guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: 53, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: 53, keyDown: false) else { return }
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
     }
 
     private func openMenu(application: AXUIElement, title: String) throws -> [AXUIElement] {
@@ -610,17 +722,21 @@ public final class MacLogicTrackScripting: LogicTrackScripting, @unchecked Senda
     }
 
     private func parseHeader(_ element: AXUIElement) -> Header? {
-        guard attributeString(element, kAXRoleAttribute) == kAXGroupRole,
-              let description = attributeString(element, kAXDescriptionAttribute),
-              let match = description.wholeMatch(of: /Track ([0-9]+) “(.+)”(?:,.*)?/) else { return nil }
-        let selected = attributeBool(element, kAXSelectedAttribute) == true || descendants(of: element, maximum: 100).contains {
+        guard attributeString(element, kAXRoleAttribute) == "AXLayoutItem" else { return nil }
+        let children = descendants(of: element, maximum: 100)
+        guard let description = attributeString(element, kAXDescriptionAttribute),
+              let match = description.wholeMatch(of: /Track ([0-9]+) [“\"](.+?)[”\"](?:,.*)?/) else { return nil }
+        let name = String(match.2)
+        let selected = attributeBool(element, kAXSelectedAttribute) == true || children.contains {
             attributeString($0, kAXRoleAttribute) == kAXRadioButtonRole &&
-                attributeString($0, kAXDescriptionAttribute) == "Has Focus" && attributeInt($0, kAXValueAttribute) == 1
+                (attributeString($0, kAXDescriptionAttribute) == "Has Focus" ||
+                    attributeString($0, kAXHelpAttribute)?.contains("Track header") == true) &&
+                attributeInt($0, kAXValueAttribute) == 1
         }
         return Header(
             element: element,
             position: Int(match.1) ?? 0,
-            name: String(match.2),
+            name: name,
             selected: selected
         )
     }
@@ -629,9 +745,14 @@ public final class MacLogicTrackScripting: LogicTrackScripting, @unchecked Senda
         let elements = descendants(of: application, maximum: 12_000)
         let descriptions = elements.compactMap { attributeString($0, kAXDescriptionAttribute) }
         let values = elements.compactMap { attributeString($0, kAXValueAttribute) }
-        if values.contains("Audio Defaults Region:") || descriptions.contains("Audio Defaults Region:") { return .audio }
-        guard values.contains("MIDI Defaults Region:") || descriptions.contains("MIDI Defaults Region:") else { return nil }
-        return descriptions.contains("midi assign knob") ? .externalMIDI : .softwareInstrument
+        let titles = elements.compactMap { attributeString($0, kAXTitleAttribute) }
+        let help = elements.compactMap { attributeString($0, kAXHelpAttribute) }
+        if descriptions.contains("midi assign knob") { return .externalMIDI }
+        if descriptions.contains("MIDI plug-in") { return .softwareInstrument }
+        if help.contains(where: { $0.hasPrefix("Input slot. Choose the channel strip input source.") }) { return .audio }
+        if values.contains("Audio Defaults Region:") || descriptions.contains("Audio Defaults Region:") || titles.contains("Audio Defaults Region:") { return .audio }
+        guard values.contains("MIDI Defaults Region:") || descriptions.contains("MIDI Defaults Region:") || titles.contains("MIDI Defaults Region:") else { return nil }
+        return .softwareInstrument
     }
 
     private func descendants(of root: AXUIElement, maximum: Int) -> [AXUIElement] {
@@ -665,6 +786,16 @@ public final class MacLogicTrackScripting: LogicTrackScripting, @unchecked Senda
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }
         return (value as? NSNumber)?.intValue
+    }
+
+    private func focusedUIElement(_ application: AXUIElement) -> AXUIElement? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            application,
+            kAXFocusedUIElementAttribute as CFString,
+            &value
+        ) == .success, let value else { return nil }
+        return (value as! AXUIElement)
     }
 
     private func frame(_ element: AXUIElement) -> CGRect? {

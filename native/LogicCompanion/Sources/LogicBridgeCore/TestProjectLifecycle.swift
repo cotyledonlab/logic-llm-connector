@@ -362,13 +362,26 @@ public final class TestProjectLifecycleController: ProjectLifecycleControlling, 
                 lock.withLock { pendingOpenURL = nil }
                 try scripting.closeWithoutSaving(projectAt: managed)
                 commandDispatched = true
-                let closed: Bool? = waitFor(timeoutMilliseconds: timeoutMilliseconds, condition: {
+                let firstWait = max(1, min(2_000, timeoutMilliseconds / 3))
+                var closed: Bool? = waitFor(timeoutMilliseconds: firstWait, condition: {
                     do {
                         return try scripting.observe() == nil ? true : nil
                     } catch {
                         return nil
                     }
                 })
+                if closed == nil,
+                   let stillOpen = try scripting.observe(),
+                   samePath(stillOpen.path, managed.path) {
+                    try scripting.closeWithoutSaving(projectAt: managed)
+                    closed = waitFor(timeoutMilliseconds: max(1, timeoutMilliseconds - firstWait), condition: {
+                        do {
+                            return try scripting.observe() == nil ? true : nil
+                        } catch {
+                            return nil
+                        }
+                    })
+                }
                 guard closed != nil else {
                     return failureResult(operationID: operationID, action: .cleanup, startedAt: startedAt, failure: .postconditionFailed, managedURL: managed, commandDispatched: true)
                 }
