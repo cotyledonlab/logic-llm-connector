@@ -57,3 +57,24 @@ _Avoid_: Fixture, sandbox
 A visible, interruptible state in which automated UI input has sole control of
 the interactive Mac and may mutate only Test Projects.
 _Avoid_: Automation mode
+
+**Musical Time**:
+An integer count of quarter-note subdivisions paired with its pulses-per-quarter
+timebase. A location is measured from project start; a Note onset is measured
+from its MIDI Region start.
+_Avoid_: Timestamp, bar position, beat string
+
+**MIDI Region**:
+An arranged container of MIDI Notes on one software-instrument or external-MIDI
+Track, with an opaque identity, Musical Time position, and Musical Time length.
+_Avoid_: Clip, sequence
+
+**MIDI Note**:
+A pitched event within a MIDI Region, preserving onset, duration, velocity, and
+one-based MIDI channel under an opaque identity.
+_Avoid_: Event, key
+
+**Fidelity Difference**:
+An explicit field-level difference between requested MIDI content and content
+observed after Logic import or editor mutation. An empty set means exact fidelity.
+_Avoid_: Warning, mismatch
