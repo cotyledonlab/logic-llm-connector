@@ -302,7 +302,14 @@ private let diagnosticsEnabled = ProcessInfo.processInfo.environment["LOGIC_ENAB
 private let mackieFeedback = MackieControlFeedbackMonitor()
 private let projectLifecycle = TestProjectLifecycleController()
 private let testModeController = ExclusiveTestModeController()
+private let trackScripting = MacLogicTrackScripting()
 private let trackOperations = TrackOperationsController(
+    scripting: trackScripting,
+    policyContextReady: { projectLifecycle.hasVerifiedPolicyContext },
+    testModeReady: { testModeController.canBeginUIOperation }
+)
+private let midiRegionOperations = MIDIRegionOperationsController(
+    scripting: MacLogicMIDIRegionScripting(trackScripting: trackScripting),
     policyContextReady: { projectLifecycle.hasVerifiedPolicyContext },
     testModeReady: { testModeController.canBeginUIOperation }
 )
@@ -328,7 +335,8 @@ private let router = BridgeRouter(
     diagnosticsEnabled: diagnosticsEnabled,
     transport: MackieTransportController(midi: midiOwner, feedback: mackieFeedback),
     projectLifecycle: projectLifecycle,
-    trackOperations: trackOperations
+    trackOperations: trackOperations,
+    midiRegionOperations: midiRegionOperations
 )
 private let application = NSApplication.shared
 private let delegate = CompanionApplicationDelegate(
