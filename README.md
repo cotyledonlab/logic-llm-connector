@@ -6,10 +6,10 @@ multiple Logic adapters behind one stable interface.
 
 ## Status
 
-Foundation work is in progress. Environment diagnosis, verified transport, and
-the safe Test Project lifecycle are supported. Track Operations are the next
-delivery slice; additional mutating Logic tools are added only through isolated
-Test Project acceptance.
+Foundation work is in progress. Environment diagnosis, verified transport, the
+safe Test Project lifecycle, and verified track operations are supported. MIDI
+region operations are the next delivery slice; additional mutating Logic tools
+are added only through isolated Test Project acceptance.
 
 ## Architecture
 
@@ -34,6 +34,16 @@ npm install
 npm test
 npm run test:package
 npm run test:integration
+```
+
+Track acceptance uses the same no-document and disposable-fixture preconditions.
+It creates and names software instrument, audio, and external MIDI tracks, then
+verifies selection, duplication, reorder, deletion, Undo availability, save,
+close, and cleanup:
+
+```sh
+LOGIC_TEST_PROJECT_FIXTURE="/absolute/path/to/Fixture.logicx" \
+npm run test:track-integration
 ```
 
 Project-mutating real-Logic tests will use disposable fixtures and require
@@ -97,6 +107,15 @@ of the document URL and edited flag verify their postconditions, with Apple
 Events retained as an observation fallback. A timed-out asynchronous open keeps
 its copied workspace until the exact delayed document can be observed, closed,
 and safely cleaned.
+
+`logic_list_tracks`, `logic_create_track`, `logic_rename_track`,
+`logic_select_track`, `logic_duplicate_track`, `logic_reorder_track`, and
+`logic_delete_track` operate only inside the verified managed copy while
+Exclusive Test Mode is active. Supported creation types are software
+instrument, audio, and external MIDI. Results preserve opaque track IDs and
+report the observed ordered list with type, name, position, and selection;
+delete requires explicit confirmation and verifies Undo availability. The
+`logic://tracks/state` resource provides read-only observation.
 
 The signed Companion runs as a menu-bar app. Its menu continuously reports the
 native connection, whether Logic is running, and Exclusive Test Mode status.

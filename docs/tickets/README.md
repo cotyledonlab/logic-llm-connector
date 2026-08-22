@@ -17,7 +17,7 @@ passes and the result is committed and pushed.
 | [0008](0008-mackie-onboarding.md) | Complete | Repeatable Logic control-surface setup |
 | [0009](0009-verified-transport.md) | Complete | Play/stop/location with feedback |
 | [0010](0010-test-project-lifecycle.md) | Complete | Safe open/save/close/reopen with real-Logic acceptance |
-| [0011](0011-track-operations.md) | Pending | Track creation and selection |
+| [0011](0011-track-operations.md) | Complete | Verified track operations and identity |
 | [0012](0012-midi-region-operations.md) | Pending | MIDI creation and editing |
 | [0013](0013-audio-and-recording.md) | Pending | Audio regions and recording |
 | [0014](0014-mixer-and-routing.md) | Pending | Mixer, sends, buses, and I/O |
@@ -45,3 +45,5 @@ passes and the result is committed and pushed.
 - `9c34b62` → ticket 0010 isolated packaged lifecycle acceptance gate
 - `43b0d56` → ticket 0010 real-Logic lifecycle and CoreMIDI hardening
 - `cb91b6a` → ticket 0010 delayed-open reconciliation and startup stabilization
+- `8256249` → ticket 0011 track contract, native controller, MCP surface, and deterministic tests
+- `f57758d` → ticket 0011 real-Logic verification and resilient managed cleanup
