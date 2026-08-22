@@ -460,6 +460,266 @@ public struct TrackOperationResult: Codable, Sendable, Equatable {
     }
 }
 
+public let logicMusicalTimePPQ = 960
+
+public struct MusicalTime: Codable, Sendable, Equatable, Hashable {
+    public let ticks: Int64
+    public let ppq: Int
+
+    public init(ticks: Int64, ppq: Int = logicMusicalTimePPQ) {
+        self.ticks = ticks
+        self.ppq = ppq
+    }
+}
+
+public struct MIDINoteContent: Codable, Sendable, Equatable {
+    public let pitch: Int
+    public let onset: MusicalTime
+    public let duration: MusicalTime
+    public let velocity: Int
+    public let channel: Int
+
+    public init(
+        pitch: Int,
+        onset: MusicalTime,
+        duration: MusicalTime,
+        velocity: Int,
+        channel: Int
+    ) {
+        self.pitch = pitch
+        self.onset = onset
+        self.duration = duration
+        self.velocity = velocity
+        self.channel = channel
+    }
+}
+
+public struct MIDINoteIdentity: Codable, Sendable, Equatable {
+    public let id: String
+    public let pitch: Int
+    public let onset: MusicalTime
+    public let duration: MusicalTime
+    public let velocity: Int
+    public let channel: Int
+
+    public init(
+        id: String,
+        pitch: Int,
+        onset: MusicalTime,
+        duration: MusicalTime,
+        velocity: Int,
+        channel: Int
+    ) {
+        self.id = id
+        self.pitch = pitch
+        self.onset = onset
+        self.duration = duration
+        self.velocity = velocity
+        self.channel = channel
+    }
+
+    public init(id: String, content: MIDINoteContent) {
+        self.init(
+            id: id,
+            pitch: content.pitch,
+            onset: content.onset,
+            duration: content.duration,
+            velocity: content.velocity,
+            channel: content.channel
+        )
+    }
+
+    public var content: MIDINoteContent {
+        MIDINoteContent(
+            pitch: pitch,
+            onset: onset,
+            duration: duration,
+            velocity: velocity,
+            channel: channel
+        )
+    }
+}
+
+public struct MIDIRegionIdentity: Codable, Sendable, Equatable {
+    public let id: String
+    public let trackID: String
+    public let name: String
+    public let position: MusicalTime
+    public let length: MusicalTime
+    public let notes: [MIDINoteIdentity]
+    public let selected: Bool
+    public let active: Bool
+    public let observedAt: Date
+
+    public init(
+        id: String,
+        trackID: String,
+        name: String,
+        position: MusicalTime,
+        length: MusicalTime,
+        notes: [MIDINoteIdentity],
+        selected: Bool,
+        active: Bool,
+        observedAt: Date
+    ) {
+        self.id = id
+        self.trackID = trackID
+        self.name = name
+        self.position = position
+        self.length = length
+        self.notes = notes
+        self.selected = selected
+        self.active = active
+        self.observedAt = observedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case trackID = "trackId"
+        case name
+        case position
+        case length
+        case notes
+        case selected
+        case active
+        case observedAt
+    }
+}
+
+public struct MIDIFidelityDifference: Codable, Sendable, Equatable {
+    public let targetID: String?
+    public let field: String
+    public let requested: JSONValue
+    public let observed: JSONValue
+    public let reason: String
+
+    public init(targetID: String? = nil, field: String, requested: JSONValue, observed: JSONValue, reason: String) {
+        self.targetID = targetID
+        self.field = field
+        self.requested = requested
+        self.observed = observed
+        self.reason = reason
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case targetID = "targetId"
+        case field
+        case requested
+        case observed
+        case reason
+    }
+}
+
+public enum MIDIRegionOperationAction: String, Codable, Sendable {
+    case observe
+    case create
+    case rename
+    case move
+    case resize
+    case duplicate
+    case split
+    case updateNote = "update_note"
+    case replaceNotes = "replace_notes"
+    case delete
+    case verifyPlayback = "verify_playback"
+}
+
+public enum MIDIRegionOperationFailure: String, Codable, Sendable, Error {
+    case projectPolicyMissing = "project_policy_missing"
+    case testModeInactive = "test_mode_inactive"
+    case accessibilityUnavailable = "accessibility_unavailable"
+    case logicNotRunning = "logic_not_running"
+    case logicNotFocused = "logic_not_focused"
+    case trackNotFound = "track_not_found"
+    case regionNotFound = "region_not_found"
+    case noteNotFound = "note_not_found"
+    case invalidMusicalTime = "invalid_musical_time"
+    case invalidNote = "invalid_note"
+    case invalidName = "invalid_name"
+    case invalidSplitPosition = "invalid_split_position"
+    case confirmationRequired = "confirmation_required"
+    case dialogPresented = "dialog_presented"
+    case commandFailed = "command_failed"
+    case postconditionFailed = "postcondition_failed"
+    case undoUnavailable = "undo_unavailable"
+    case playbackNotObserved = "playback_not_observed"
+}
+
+public struct MIDIRegionOperationData: Codable, Sendable, Equatable {
+    public let action: MIDIRegionOperationAction
+    public let commandDispatched: Bool
+    public let policyContext: Bool
+    public let targetRegionID: String?
+    public let createdRegionIDs: [String]
+    public let exactFidelity: Bool
+    public let fidelityDifferences: [MIDIFidelityDifference]
+    public let playbackVerified: Bool
+    public let undoAvailable: Bool
+    public let regions: [MIDIRegionIdentity]
+    public let failure: MIDIRegionOperationFailure?
+
+    public init(
+        action: MIDIRegionOperationAction,
+        commandDispatched: Bool,
+        policyContext: Bool,
+        targetRegionID: String? = nil,
+        createdRegionIDs: [String] = [],
+        fidelityDifferences: [MIDIFidelityDifference] = [],
+        playbackVerified: Bool = false,
+        undoAvailable: Bool = false,
+        regions: [MIDIRegionIdentity],
+        failure: MIDIRegionOperationFailure? = nil
+    ) {
+        self.action = action
+        self.commandDispatched = commandDispatched
+        self.policyContext = policyContext
+        self.targetRegionID = targetRegionID
+        self.createdRegionIDs = createdRegionIDs
+        self.exactFidelity = fidelityDifferences.isEmpty
+        self.fidelityDifferences = fidelityDifferences
+        self.playbackVerified = playbackVerified
+        self.undoAvailable = undoAvailable
+        self.regions = regions
+        self.failure = failure
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case action
+        case commandDispatched
+        case policyContext
+        case targetRegionID = "targetRegionId"
+        case createdRegionIDs = "createdRegionIds"
+        case exactFidelity
+        case fidelityDifferences
+        case playbackVerified
+        case undoAvailable
+        case regions
+        case failure
+    }
+}
+
+public struct MIDIRegionOperationResult: Codable, Sendable, Equatable {
+    public let protocolVersion: String
+    public let operationID: String
+    public let status: OperationStatus
+    public let reliability: Reliability
+    public let startedAt: Date
+    public let finishedAt: Date
+    public let data: MIDIRegionOperationData
+    public let evidence: [Evidence]
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion
+        case operationID = "operationId"
+        case status
+        case reliability
+        case startedAt
+        case finishedAt
+        case data
+        case evidence
+    }
+}
+
 public extension JSONEncoder {
     static var bridge: JSONEncoder {
         let encoder = JSONEncoder()
