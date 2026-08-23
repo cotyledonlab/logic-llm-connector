@@ -5,16 +5,18 @@
 - Repository: `cotyledonlab/logic-llm-connector` (private)
 - Branch: `main`, tracking `origin/main`
 - Latest completed implementation commit: `5c0c719`
-- Ticket 0012 implementation is committed and pushed, but its packaged real-Logic
-  acceptance is still in progress. Do not mark the ticket complete yet.
-- The worktree intentionally contains the five uncommitted acceptance/lifecycle
-  files listed below. Preserve them when resuming.
-- Logic Pro was running with PID `54382` when this handoff was written. Recheck
-  its document state and responsiveness before running acceptance.
+- Ticket 0012 implementation is committed and pushed, but packaged real-Logic
+  acceptance remains incomplete. Do not mark the ticket complete yet.
+- Six tracked implementation/acceptance files are intentionally uncommitted and
+  listed below. Preserve them when resuming.
+- Logic Pro 12.3 was running as PID `58921` when this handoff was written. It is
+  blocked in an audio-engine `NSAlert` modal that is not exposed as a normal
+  Accessibility/CGWindow window. The user must dismiss this alert before more
+  real-Logic acceptance runs.
 
 ## Completed and pushed for ticket 0012
 
-The MIDI region and note surface is implemented across four commits:
+The MIDI region and note surface remains implemented across four commits:
 
 - `b71b5d3` — explicit musical-time contract and ADR
 - `c245b80` — region domain, opaque identity, and deterministic Standard MIDI
@@ -29,118 +31,132 @@ positions are absolute from project start; note onsets are relative to their
 region. MIDI channels are one-based. All mutations retain the managed Test
 Project and active Exclusive Test Mode gates.
 
-The production Logic adapter observes arrangement regions through
-Accessibility, exports exact note data through a temporary SMF, edits region
-name/position/length through Event Float, and imports deterministic SMF data for
-create/replace/note edits. Track and MIDI adapters share the same track identity
-source.
-
 ## Uncommitted work to preserve
 
-Five tracked files are modified:
+Six tracked files are modified:
 
 - `native/LogicCompanion/Sources/LogicBridgeCore/TestProjectLifecycle.swift`
   bounds Accessibility messaging, rejects malformed Logic 12 `AXWindows`
-  application proxies, deterministically reconciles an already-removed owned
-  workspace, and currently experiments with `NSWorkspace.open` for project
-  opening. The new opening mechanism is not yet validated in a healthy Logic
-  session and may need to be reverted to the prior asynchronous Apple Event.
+  application proxies, and deterministically reconciles an already-removed
+  owned workspace. The experimental `NSWorkspace.open` change was reverted;
+  opening again uses the prior asynchronous Apple Event because LaunchServices
+  became unreliable in a no-window Logic session.
+- `native/LogicCompanion/Sources/LogicBridgeCore/MacLogicMIDIRegionScripting.swift`
+  contains two newly diagnosed Logic 12 compatibility fixes that compile but
+  have not completed real-Logic acceptance:
+  - region `AXPress` can return success without selecting; the adapter raises
+    the Tracks window and sets `AXSelected` directly when it is settable, with a
+    coordinate fallback;
+  - dynamic menu items must be found after opening a top-level menu. The adapter
+    now opens menu-bar items before validating and pressing the requested item.
 - `native/LogicCompanion/Tests/LogicBridgeCoreTests/TestProjectLifecycleTests.swift`
   adds a passing regression for cleanup after an already-closed workspace was
   externally removed.
 - `native/LogicCompanion/Tests/LogicBridgeCoreTests/MacLogicMIDIRegionScriptingTests.swift`
   adds the opt-in four-bar real-Logic round trip: observe fixture regions,
-  create, rename, move, resize, update a note, duplicate, split, verify playback,
-  delete, and verify Undo.
+  create, rename, move, resize, update a note, duplicate, split, verify
+  playback, delete, and verify Undo.
 - `package.json` adds `npm run test:midi-integration`.
 - `tests/integration/doctor-stack.test.ts` launches the native four-bar test
-  inside the packaged managed-project lifecycle. It currently includes temporary
-  `/tmp/logic-midi-acceptance-stages.log` diagnostics and stderr stage markers;
-  remove those before committing. A `writeFileSync` stage reset was accidentally
-  placed in the first, skipped doctor test and must also be removed or moved.
+  inside the packaged managed-project lifecycle. It still contains temporary
+  `/tmp/logic-midi-acceptance-stages.log` diagnostics, stderr stage markers,
+  direct workspace removal, and lifecycle-cleanup workarounds inherited from
+  the prior debugging session. Remove them before committing. A stage-log reset
+  is still misplaced in the first skipped doctor test.
 
-The integration harness currently closes the project, removes the exact verified
-connector-owned workspace directly, and asks lifecycle cleanup to reconcile it.
-That was a diagnostic workaround for an unhealthy Logic process. Once Logic is
-responsive, prefer restoring normal lifecycle cleanup and validate that path.
-The `finally` block also temporarily skips cleanup before `managedPath` is set;
-restore safe unconditional cleanup handling after the opening failure is fixed.
+All temporary `[DEBUG-...]` Swift probes and the opt-in 30-second pause were
+removed before this handoff. `swift build --package-path native/LogicCompanion`
+passes with the current six-file worktree.
 
-## Real-Logic acceptance status
+## What the latest acceptance established
 
-The four-bar operation test has compiled but has not reached its native operation
-phase. The last packaged attempts failed while opening the managed project copy:
+A clean Logic session allowed the packaged harness to pass the old lifecycle
+blocker: the managed fixture opened, closed, and reopened, and the native MIDI
+test started. Initial observation then failed quickly.
 
-- `logic_open_test_project` reported `postcondition_failed` after 30 seconds with
-  `commandDispatched: true` and no observed managed document.
-- Later attempts in the same unhealthy Logic process also ignored or hung direct
-  Apple Events and `NSWorkspace.open`.
-- The temporary stage log reached `cleanup-start` but never `native-start`, so no
-  MIDI mutation from this acceptance test has run against Logic yet.
+With `LOGIC_MIDI_ADAPTER_DISCOVERY=1`, the exact path was observed:
 
-The source fixture is `~/Music/Logic/LLM Jazz.logicx`. It was never opened or
-modified. Failed connector-owned copies were confirmed unopened and moved to
-Trash, not permanently deleted. Before a new run, inspect
-`~/Music/Logic/Logic LLM Connector/Test Projects`; if a failed managed workspace
-remains, confirm Logic does not have it open and move only that exact workspace
-to Trash.
+1. Logic exposed the correct Tracks window, two tracks, and four raw MIDI
+   regions at positions 0, 3840, 7680, and 11520.
+2. `AXPress` on the first region returned success but left `AXSelected=false`.
+3. Setting `AXSelected=true` succeeded.
+4. `Selection as MIDI File…` remained reported disabled while its containing
+   menu was dormant.
+5. Opening top-level menus caused validation to update, and the export command
+   dispatched successfully (`MIDI_ADAPTER_STAGE export menu dispatched`).
+6. The operation then failed approximately five seconds later inside
+   `completeSavePanel`, before `export saved`. The remaining active defect is
+   therefore save-panel discovery or save-panel structure, most likely the
+   expected title `Save MIDI File as:` no longer matching Logic 12.3.
 
-Resume with Logic open, responsive, and showing no document:
+The next run intended to log the save-panel title/fields, but Logic stopped
+accepting all document-open events first. `NSWorkspace.open`, asynchronous Apple
+Events, `open -a`, and `open -F -a` were all ignored in that session.
 
-```sh
-LOGIC_TEST_PROJECT_FIXTURE="$HOME/Music/Logic/LLM Jazz.logicx" \
-npm run test:midi-integration
+## Current Logic blocker and disposable workspace
+
+Sampling PID `58921` showed the main thread inside:
+
+```text
+MDCA::Idle -> MD::Idle -> CMDLogicInterface::MDalert -> NSAlert runModal
 ```
 
-If opening still fails in a healthy session, compare the uncommitted
-`NSWorkspace.open` implementation with the previously working asynchronous
-Apple Event before changing the MIDI adapter. Avoid repeated acceptance runs
-until the managed open/observe postcondition is reliable.
+The sample is at `/tmp/logic-pro-sample.txt`. Logic exposes no normal window to
+Computer Use (`cgWindowNotFound`) and the Accessibility tree exposes only
+application/menu proxies, so the alert could not be read or safely dismissed
+automatically. Activate Logic manually and dismiss the audio alert, trying
+Escape first and Return only if appropriate.
 
-## Validation status
+One connector-owned workspace from the last failed open remains at:
 
-Before the uncommitted acceptance/lifecycle follow-up, these passed:
-
-```sh
-npm run typecheck
-npm run build
-npm test
-npm run test:package
+```text
+/Users/johnmaher/Library/Application Support/Logic LLM Connector/Test Projects/779e4455-81c5-46d5-95e0-f45ea76040e1
 ```
 
-That checkpoint included 67 native tests; four real-Logic-only tests were
-skipped. The new musical-time conversion tests and the new absent-workspace
-cleanup regression also passed individually. The current five-file worktree has
-not received a final full-suite run.
+`lsof` showed that Logic did not have this workspace open when it was left. It
+may be reused as a disposable direct-debug copy after Logic recovers, or moved
+to Trash after rechecking it is not open. Never open or mutate the source
+fixture `~/Music/Logic/LLM Jazz.logicx` directly.
 
-After real-Logic acceptance passes, remove diagnostics and run:
+An earlier failed disposable workspace `e8c37fed-...` was moved recoverably to
+Trash as `logic-llm-connector-e8c37fed-1e95-4b66-b13a-2221f759c1b8`.
 
-```sh
-npm run typecheck
-npm run build
-npm test
-npm run test:package
-LOGIC_TEST_PROJECT_FIXTURE="$HOME/Music/Logic/LLM Jazz.logicx" \
-npm run test:midi-integration
-```
+## Resume sequence
 
-Stop any already-running built Companion before native tests if CoreMIDI endpoint
-unique-ID collisions appear.
+1. Dismiss the hidden Logic audio alert and verify Logic is responsive.
+2. Confirm Logic has no project open. Recheck the `779e4455-...` workspace with
+   `lsof` before reusing it or moving it to Trash.
+3. Run the packaged acceptance with discovery enabled:
 
-## Completion checklist
+   ```sh
+   LOGIC_TEST_PROJECT_FIXTURE="$HOME/Music/Logic/LLM Jazz.logicx" \
+   LOGIC_MIDI_ADAPTER_DISCOVERY=1 \
+   npm run test:midi-integration
+   ```
 
-1. Verify Logic has no document open, is responsive, and no stale managed copy is
-   present or in use.
-2. Make managed project open/observe reliable and run the packaged MIDI
-   acceptance through `native-pass` and cleanup.
-3. Restore normal lifecycle cleanup in the harness if the healthy session allows
-   it; remove all temporary stage logging.
-4. Run the complete validation matrix above.
-5. Mark [`0012`](docs/tickets/0012-midi-region-operations.md) and the
+4. Instrument only `completeSavePanel` if it again stops after
+   `export menu dispatched`. Capture focused/window titles and relevant text
+   fields after the export command. Tag temporary logs `[DEBUG-midi-save]` and
+   remove them afterward.
+5. Continue the four-bar acceptance through `native-pass`, save, close, and
+   normal lifecycle cleanup. Restore the harness from its direct-removal
+   workaround and remove all stage logging.
+6. Run the full validation matrix:
+
+   ```sh
+   npm run typecheck
+   npm run build
+   npm test
+   npm run test:package
+   LOGIC_TEST_PROJECT_FIXTURE="$HOME/Music/Logic/LLM Jazz.logicx" \
+   npm run test:midi-integration
+   ```
+
+7. Mark [`0012`](docs/tickets/0012-midi-region-operations.md) and the
    [ticket index](docs/tickets/README.md) complete only after the real-Logic
    acceptance succeeds.
-6. Commit the acceptance/lifecycle work, update this handoff for ticket 0013,
-   push, and leave the worktree and Test Projects directory clean.
+8. Commit and push the acceptance/lifecycle work, then update this handoff for
+   ticket 0013 and leave the worktree and Test Projects directory clean.
 
 ## Important implementation facts
 
