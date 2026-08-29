@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { rm, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { Client } from "@modelcontextprotocol/client";
@@ -15,7 +16,8 @@ const companionPath = join(
 );
 const projectAcceptanceEnabled = process.env["LOGIC_PROJECT_INTEGRATION_TEST"] === "1";
 const trackAcceptanceEnabled = process.env["LOGIC_TRACK_INTEGRATION_TEST"] === "1";
-const isolatedAcceptanceEnabled = projectAcceptanceEnabled || trackAcceptanceEnabled;
+const midiAcceptanceEnabled = process.env["LOGIC_MIDI_INTEGRATION_TEST"] === "1";
+const isolatedAcceptanceEnabled = projectAcceptanceEnabled || trackAcceptanceEnabled || midiAcceptanceEnabled;
 
 async function waitForSocket(path: string): Promise<void> {
   const deadline = Date.now() + 5_000;
@@ -365,8 +367,8 @@ test("TypeScript diagnoses the running Logic instance through the native socket"
 });
 
 test("MCP safely owns a copied Test Project through lifecycle and optional track acceptance", {
-  skip: isolatedAcceptanceEnabled ? false : "set LOGIC_PROJECT_INTEGRATION_TEST=1 or LOGIC_TRACK_INTEGRATION_TEST=1",
-  timeout: 120_000,
+  skip: isolatedAcceptanceEnabled ? false : "set a project, track, or MIDI integration test flag",
+  timeout: 300_000,
 }, async (t) => {
   const fixturePath = process.env["LOGIC_TEST_PROJECT_FIXTURE"];
   assert.ok(fixturePath, "set LOGIC_TEST_PROJECT_FIXTURE to a saved .logicx fixture");
@@ -418,10 +420,14 @@ test("MCP safely owns a copied Test Project through lifecycle and optional track
     assert.equal(result.isError, undefined, JSON.stringify(result.content));
     return result.structuredContent as Record<string, unknown>;
   };
-  const cleanup = async () => call("logic_cleanup_test_project", {
-    confirm: true,
-    timeoutMs: 30_000,
-  });
+  const cleanup = async () => {
+    const result = await nativeBridge.cleanupTestProject({
+      protocolVersion: "1.0.0",
+      operationId: `cleanup-${randomUUID()}`,
+      timeoutMs: 10_000,
+    });
+    return { ...result, ...result.data } as Record<string, unknown>;
+  };
 
   let managedPath: string | undefined;
   try {
@@ -508,10 +514,65 @@ test("MCP safely owns a copied Test Project through lifecycle and optional track
       }
       assert.equal(settledProject.data.project?.modified, false, JSON.stringify(settledProject));
     }
+
+    if (midiAcceptanceEnabled) {
+      const midiAcceptance = spawnSync(
+        "swift",
+        [
+          "test",
+          "--package-path",
+          "native/LogicCompanion",
+          "--filter",
+          "LogicBridgeCoreTests.realLogicMIDIOperationsRoundTripFourBars",
+        ],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            LOGIC_MIDI_INTEGRATION_TEST: "1",
+            LOGIC_MANAGED_TEST_PROJECT_PATH: managedPath,
+          },
+          encoding: "utf8",
+          timeout: 240_000,
+        },
+      );
+      if (midiAcceptance.status !== 0) {
+        process.stderr.write(`real-Logic MIDI acceptance diagnostics:\n${midiAcceptance.stdout}\n${midiAcceptance.stderr}\n`);
+      }
+      assert.equal(
+        midiAcceptance.status,
+        0,
+        `real-Logic MIDI acceptance failed:\n${midiAcceptance.stdout}\n${midiAcceptance.stderr}`,
+      );
+      process.stderr.write("MIDI_ACCEPTANCE_STAGE native-pass\n");
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      const postMIDIProject = await nativeBridge.projectState({
+        protocolVersion: "1.0.0",
+        operationId: "project-post-midi-acceptance",
+      });
+      assert.equal(postMIDIProject.status, "succeeded", JSON.stringify(postMIDIProject));
+      assert.equal(postMIDIProject.data.project?.path, managedPath);
+      process.stderr.write("MIDI_ACCEPTANCE_STAGE project-observed\n");
+      const savedAfterMIDI = await call("logic_save_test_project", { confirm: true, timeoutMs: 30_000 });
+      assert.equal(savedAfterMIDI["status"], "succeeded", JSON.stringify(savedAfterMIDI));
+      process.stderr.write("MIDI_ACCEPTANCE_STAGE project-saved\n");
+      const closedAfterMIDI = await call("logic_close_test_project", { timeoutMs: 10_000 });
+      assert.equal(closedAfterMIDI["status"], "succeeded", JSON.stringify(closedAfterMIDI));
+      process.stderr.write("MIDI_ACCEPTANCE_STAGE project-closed\n");
+      const closedMIDIState = await nativeBridge.projectState({
+        protocolVersion: "1.0.0",
+        operationId: "project-post-midi-close",
+      });
+      assert.equal(closedMIDIState.data.project, undefined, JSON.stringify(closedMIDIState));
+      await rm(dirname(managedPath), { recursive: true });
+    }
   } finally {
-    const cleaned = await cleanup();
-    assert.equal(cleaned["status"], "succeeded", JSON.stringify(cleaned));
-    assert.equal(cleaned["cleanupPerformed"], true);
+    if (managedPath) {
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      const cleaned = await cleanup();
+      assert.equal(cleaned["status"], "succeeded", JSON.stringify(cleaned));
+      assert.equal(cleaned["cleanupPerformed"], true);
+    }
   }
 
   const afterSuccess = await nativeBridge.projectState({

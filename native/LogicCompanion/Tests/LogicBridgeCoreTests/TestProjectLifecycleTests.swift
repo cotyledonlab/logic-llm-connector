@@ -208,6 +208,29 @@ func testProjectFailedOpenCleansCopy() throws {
     #expect(!FileManager.default.fileExists(atPath: fixture.testRoot.appendingPathComponent("copy-1").path))
 }
 
+@Test("cleanup clears stale ownership after an already-closed workspace is absent")
+func testProjectCleanupReconcilesAbsentWorkspace() throws {
+    let scripting = FakeProjectScripting()
+    let fixture = try LifecycleFixture(scripting: scripting)
+    defer { fixture.remove() }
+    let opened = fixture.controller.openFixture(
+        at: fixture.source.path,
+        operationID: "open-1",
+        timeoutMilliseconds: 10
+    )
+    let managedPath = try #require(opened.data.managedProjectPath)
+    let closed = fixture.controller.close(operationID: "close-1", timeoutMilliseconds: 10)
+    #expect(closed.status == .succeeded)
+    try FileManager.default.removeItem(at: URL(fileURLWithPath: managedPath).deletingLastPathComponent())
+
+    let cleaned = fixture.controller.cleanup(operationID: "cleanup-1", timeoutMilliseconds: 10)
+
+    #expect(cleaned.status == .succeeded)
+    #expect(cleaned.data.cleanupPerformed)
+    #expect(cleaned.data.managedProjectPath == nil)
+    #expect(fixture.controller.observe(operationID: "state-1").data.managedProjectPath == nil)
+}
+
 @Test("timed-out open retains its workspace until the delayed document can be closed")
 func testTimedOutOpenRetainsWorkspaceUntilReconciled() throws {
     let scripting = FakeProjectScripting()

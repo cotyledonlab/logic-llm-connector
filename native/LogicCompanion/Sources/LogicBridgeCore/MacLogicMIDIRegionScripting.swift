@@ -82,6 +82,7 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
     private var replacementRegionID: String?
     private var cachedTracksWindow: AXUIElement?
     private var cachedEventFloat: AXUIElement?
+    private var cachedDocumentDirectory: URL?
 
     public init(trackScripting: any LogicTrackScripting) {
         self.trackScripting = trackScripting
@@ -103,6 +104,51 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
             try importRegion(trackID: trackID, name: name, position: position, length: length, notes: notes)
         }
     }
+
+#if DEBUG
+    /// Narrow real-Logic acceptance seam for the remote Open panel. It avoids
+    /// note observation (and therefore MIDI exports), then removes the region
+    /// it imported before returning.
+    func exerciseImportPanelForAcceptance(
+        trackID: String,
+        position: MusicalTime,
+        length: MusicalTime,
+        notes: [MIDINoteContent]
+    ) throws {
+        try lock.withLock {
+            let application = try logicApplication(requireFocus: false)
+            let tracks = try trackScripting.observeTracks()
+            let beforeElements = try rawRegions(application: application, tracks: tracks).map(\.element)
+
+            try importRegion(
+                trackID: trackID,
+                name: "LLM Import Panel Probe",
+                position: position,
+                length: length,
+                notes: notes
+            )
+
+            let refreshedTracks = try trackScripting.observeTracks()
+            let refreshedApplication = try logicApplication(requireFocus: false)
+            let after = try rawRegions(application: refreshedApplication, tracks: refreshedTracks)
+            guard let imported = after.first(where: { candidate in
+                !beforeElements.contains(where: { CFEqual($0, candidate.element) })
+            }) else {
+                throw LogicMIDIRegionScriptingError.commandFailed
+            }
+            let cleanupRecord = Record(
+                id: "acceptance-import", element: imported.element,
+                trackID: imported.trackID, name: imported.name,
+                position: imported.position, length: imported.length,
+                selected: imported.selected, active: imported.active,
+                notes: [], notesObservedAt: nil
+            )
+            try select(cleanupRecord)
+            pressKey(51)
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+    }
+#endif
 
     public func rename(regionID: String, name: String) throws {
         try lock.withLock {
@@ -351,15 +397,40 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
 
     private func exportedNotes(for record: Record) throws -> [MIDINoteIdentity] {
         discoveryLog("export begin name=\(record.name) position=\(record.position.ticks)")
-        try select(record)
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("logic-llm-connector-midi-\(UUID().uuidString.lowercased())", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let output = directory.appendingPathComponent("region.mid")
+        // Modal save-panel sessions rebuild the arrangement's AX tree and
+        // invalidate previously captured region elements, so re-resolve the
+        // live element by signature before selecting.
+        var liveRecord = record
+        if let application = try? logicApplication(requireFocus: false),
+           let tracks = try? trackScripting.observeTracks().sorted(by: { $0.position < $1.position }),
+           let fresh = (try? rawRegions(application: application, tracks: tracks))?.first(where: {
+               $0.trackID == record.trackID && $0.name == record.name &&
+                   $0.position == record.position && $0.length == record.length
+           }) {
+            liveRecord.element = fresh.element
+        }
+        try select(liveRecord)
+        let directory = try currentDocumentDirectory() ?? FileManager.default.temporaryDirectory
+        // The save panel manages the .mid extension itself; setting a name
+        // that already carries it produces mangled filenames.
+        let stem = "llm-export-\(UUID().uuidString.lowercased())"
         try performMenuItem(title: "Selection as MIDI File…")
         discoveryLog("export menu dispatched")
-        try completeSavePanel(directory: directory.path, filename: output.lastPathComponent)
+        try completeSavePanel(filename: stem)
+        let exportDeadline = Date().addingTimeInterval(10)
+        var output: URL? = nil
+        while output == nil, Date() < exportDeadline {
+            let matches = (try? FileManager.default.contentsOfDirectory(
+                at: directory, includingPropertiesForKeys: nil
+            ))?.filter { $0.lastPathComponent.hasPrefix(stem) } ?? []
+            output = matches.first
+            if output == nil { Thread.sleep(forTimeInterval: 0.05) }
+        }
+        guard let output else {
+            discoveryLog("export: file never appeared in \(directory.path)")
+            throw LogicMIDIRegionScriptingError.commandFailed
+        }
+        defer { try? FileManager.default.removeItem(at: output) }
         discoveryLog("export saved bytes=\((try? Data(contentsOf: output).count) ?? -1)")
         let decoded = try StandardMIDIFile.decode(Data(contentsOf: output))
         var unmatched = record.notes
@@ -378,7 +449,7 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
         }
     }
 
-    private func completeSavePanel(directory: String, filename: String) throws {
+    private func completeSavePanel(filename: String) throws {
         let application = try logicApplication(requireFocus: false)
         let panel = try waitForWindow(application: application) {
             attributeString($0, kAXTitleAttribute)?.hasPrefix("Save MIDI File as:") == true
@@ -390,15 +461,6 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
         }), AXUIElementSetAttributeValue(name, kAXValueAttribute as CFString, filename as CFTypeRef) == .success else {
             throw LogicMIDIRegionScriptingError.commandFailed
         }
-        pressKey(5, flags: [.maskCommand, .maskShift])
-        let sheet = try waitForElement(root: panel) { attributeString($0, kAXRoleAttribute) == kAXSheetRole }
-        guard let path = descendants(sheet, maximum: 500).first(where: {
-            attributeString($0, kAXRoleAttribute) == kAXTextFieldRole &&
-                attributeString($0, kAXValueAttribute)?.hasPrefix("/") == true
-        }), AXUIElementSetAttributeValue(path, kAXValueAttribute as CFString, directory as CFTypeRef) == .success else {
-            throw LogicMIDIRegionScriptingError.commandFailed
-        }
-        pressKey(36)
         Thread.sleep(forTimeInterval: 0.3)
         panelElements = descendants(panel, maximum: 2_000)
         guard let save = panelElements.first(where: {
@@ -407,14 +469,7 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
         }), AXUIElementPerformAction(save, kAXPressAction as CFString) == .success else {
             throw LogicMIDIRegionScriptingError.commandFailed
         }
-        let destination = URL(fileURLWithPath: directory).appendingPathComponent(filename)
-        let deadline = Date().addingTimeInterval(5)
-        while !FileManager.default.fileExists(atPath: destination.path), Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.05)
-        }
-        guard FileManager.default.fileExists(atPath: destination.path) else {
-            throw LogicMIDIRegionScriptingError.commandFailed
-        }
+        discoveryLog("save pressed")
     }
 
     private func importRegion(
@@ -429,11 +484,18 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
             application: logicApplication(requireFocus: false),
             tracks: beforeTracks
         ).map(\.element)
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("logic-llm-connector-midi-\(UUID().uuidString.lowercased())", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let input = directory.appendingPathComponent("region.mid")
+        // The Import Open panel opens at the user's home directory, so stage
+        // the temporary Standard MIDI File in ~/Downloads, which the panel's
+        // sidebar exposes directly (the document directory would require the
+        // unusable go-to-folder sheet).
+        let directory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Downloads", isDirectory: true)
+        let input = directory.appendingPathComponent("llm-import-\(UUID().uuidString.lowercased()).mid")
+        defer {
+            if ProcessInfo.processInfo.environment["LOGIC_MIDI_PRESERVE_STAGED_FILE"] != "1" {
+                try? FileManager.default.removeItem(at: input)
+            }
+        }
         let identities = notes.enumerated().map { index, note in
             MIDINoteIdentity(
                 id: "import-\(index)", pitch: note.pitch, onset: note.onset,
@@ -441,9 +503,13 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
             )
         }
         try StandardMIDIFile.encode(name: name, lengthTicks: length.ticks, notes: identities).write(to: input, options: .atomic)
+        discoveryLog("import: staged \(input.lastPathComponent)")
         try trackScripting.select(trackID: trackID)
+        discoveryLog("import: track selected")
         try setPlayhead(position)
+        discoveryLog("import: playhead set")
         try performMenuItem(title: "MIDI File…")
+        discoveryLog("import: menu dispatched")
         try completeOpenPanel(path: input.path)
         Thread.sleep(forTimeInterval: 0.5)
 
@@ -468,32 +534,100 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
         }
     }
 
+    /// Resolve the staged file through the Go to Folder sheet. The remote panel
+    /// service accepts the AX value only after a real click focuses the field;
+    /// one Return resolves the path and a second confirms the MIDI import.
     private func completeOpenPanel(path: String) throws {
         let application = try logicApplication(requireFocus: false)
         let panel = try waitForWindow(application: application) { window in
             let title = attributeString(window, kAXTitleAttribute) ?? ""
-            return title.localizedCaseInsensitiveContains("midi") ||
-                descendants(window, maximum: 100).contains {
-                    attributeString($0, kAXRoleAttribute) == kAXButtonRole &&
-                        attributeString($0, kAXTitleAttribute) == "Open"
-                }
+            if title.localizedCaseInsensitiveContains("midi") ||
+                title.localizedCaseInsensitiveContains("import") { return true }
+            return descendants(window, maximum: 2_000).contains {
+                attributeString($0, kAXRoleAttribute) == kAXButtonRole &&
+                    ["Open", "Import"].contains(attributeString($0, kAXTitleAttribute) ?? "")
+            }
         }
+        discoveryLog("open panel found")
+        _ = AXUIElementPerformAction(panel, kAXRaiseAction as CFString)
+        _ = AXUIElementSetAttributeValue(panel, kAXMainAttribute as CFString, kCFBooleanTrue)
+        _ = AXUIElementSetAttributeValue(panel, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        Thread.sleep(forTimeInterval: 0.2)
         pressKey(5, flags: [.maskCommand, .maskShift])
-        let sheet = try waitForElement(root: panel) { attributeString($0, kAXRoleAttribute) == kAXSheetRole }
+        let sheet: AXUIElement
+        do {
+            sheet = try waitForElement(root: panel) {
+                attributeString($0, kAXRoleAttribute) == kAXSheetRole
+            }
+        } catch {
+            discoveryLog("open panel: Go to Folder sheet did not appear")
+            throw error
+        }
         guard let field = descendants(sheet, maximum: 500).first(where: {
-            attributeString($0, kAXRoleAttribute) == kAXTextFieldRole &&
-                attributeString($0, kAXValueAttribute)?.hasPrefix("/") == true
-        }), AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, path as CFTypeRef) == .success else {
+            attributeString($0, kAXRoleAttribute) == kAXTextFieldRole
+        }), let fieldFrame = frame(field) else {
+            discoveryLog("open panel: Go to Folder field missing")
             throw LogicMIDIRegionScriptingError.commandFailed
         }
-        pressKey(36)
-        Thread.sleep(forTimeInterval: 0.3)
-        if let open = descendants(panel, maximum: 2_000).first(where: {
-            attributeString($0, kAXRoleAttribute) == kAXButtonRole &&
-                attributeString($0, kAXTitleAttribute) == "Open"
-        }) {
-            _ = AXUIElementPerformAction(open, kAXPressAction as CFString)
+        click(at: CGPoint(x: fieldFrame.midX, y: fieldFrame.midY))
+        let stagedFile = URL(fileURLWithPath: path)
+        let directory = stagedFile.deletingLastPathComponent().path
+        guard AXUIElementSetAttributeValue(
+            field, kAXValueAttribute as CFString, directory as CFTypeRef
+        ) == .success else {
+            discoveryLog("open panel: could not set Go to Folder path")
+            throw LogicMIDIRegionScriptingError.commandFailed
         }
+        let goStatus: AXError
+        if let go = elementAttribute(sheet, kAXDefaultButtonAttribute) {
+            goStatus = AXUIElementPerformAction(go, kAXPressAction as CFString)
+        } else {
+            goStatus = AXUIElementPerformAction(field, "AXConfirm" as CFString)
+        }
+        discoveryLog("open panel: Go to Folder submit=\(goStatus.rawValue)")
+        if goStatus != .success { pressKey(36) }
+
+        let sheetDeadline = Date().addingTimeInterval(5)
+        while descendants(panel, maximum: 2_000).contains(where: { CFEqual($0, sheet) }),
+              Date() < sheetDeadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        guard !descendants(panel, maximum: 2_000).contains(where: { CFEqual($0, sheet) }) else {
+            discoveryLog("open panel: Go to Folder sheet did not dismiss")
+            throw LogicMIDIRegionScriptingError.commandFailed
+        }
+        discoveryLog("open panel: staged file resolved")
+
+        let row = try waitForElement(root: panel) {
+            attributeString($0, kAXRoleAttribute) == kAXStaticTextRole &&
+                attributeString($0, kAXValueAttribute) == stagedFile.lastPathComponent
+        }
+        guard let rowFrame = frame(row) else {
+            discoveryLog("open panel: staged file row has no frame")
+            throw LogicMIDIRegionScriptingError.commandFailed
+        }
+        click(at: CGPoint(x: rowFrame.midX, y: rowFrame.midY))
+        Thread.sleep(forTimeInterval: 0.2)
+
+        let panelElements = descendants(panel, maximum: 2_000)
+        guard let confirm = panelElements.first(where: {
+            attributeString($0, kAXRoleAttribute) == kAXButtonRole &&
+                ["Open", "Import"].contains(attributeString($0, kAXTitleAttribute) ?? "") &&
+                attributeBool($0, kAXEnabledAttribute) != false
+        }), AXUIElementPerformAction(confirm, kAXPressAction as CFString) == .success else {
+            discoveryLog("open panel: enabled confirmation button missing")
+            throw LogicMIDIRegionScriptingError.commandFailed
+        }
+        let dismissalDeadline = Date().addingTimeInterval(10)
+        while windows(application).contains(where: { CFEqual($0, panel) }),
+              Date() < dismissalDeadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        guard !windows(application).contains(where: { CFEqual($0, panel) }) else {
+            discoveryLog("open panel: confirmation did not dismiss panel")
+            throw LogicMIDIRegionScriptingError.commandFailed
+        }
+        discoveryLog("open panel confirmed")
         Thread.sleep(forTimeInterval: 0.5)
     }
 
@@ -580,7 +714,12 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
             (attributeString($0, kAXDescriptionAttribute) ?? "") <
                 (attributeString($1, kAXDescriptionAttribute) ?? "")
         }
-        guard sliders.count == values.count else { throw LogicMIDIRegionScriptingError.commandFailed }
+        // Condensed LCD modes expose fewer segments (e.g. bar/beat only);
+        // set the leading components that are present.
+        guard sliders.count <= values.count, !sliders.isEmpty else {
+            discoveryLog("setSegments: sliders=\(sliders.count) values=\(values.count)")
+            throw LogicMIDIRegionScriptingError.commandFailed
+        }
         for (slider, value) in zip(sliders, values) {
             guard AXUIElementSetAttributeValue(slider, kAXValueAttribute as CFString, NSNumber(value: value)) == .success else {
                 throw LogicMIDIRegionScriptingError.commandFailed
@@ -608,21 +747,182 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
     }
 
     private func select(_ record: Record) throws {
-        guard AXUIElementPerformAction(record.element, kAXPressAction as CFString) == .success else {
-            throw LogicMIDIRegionScriptingError.regionNotFound
+        // Region AXPress is inconsistent, but Logic exposes AXSelected as a
+        // settable attribute even when its readback remains false. Prefer that
+        // semantic selection because floating plug-in windows can obscure a
+        // region's screen coordinates; retain a real click as the fallback.
+        let application = try logicApplication(requireFocus: true)
+        if let cached = cachedTracksWindow {
+            let raiseStatus = AXUIElementPerformAction(cached, kAXRaiseAction as CFString)
+            let mainStatus = AXUIElementSetAttributeValue(
+                cached, kAXMainAttribute as CFString, kCFBooleanTrue
+            )
+            let focusedStatus = AXUIElementSetAttributeValue(
+                cached, kAXFocusedAttribute as CFString, kCFBooleanTrue
+            )
+            discoveryLog(
+                "select: tracks raise=\(raiseStatus.rawValue) main=\(mainStatus.rawValue) " +
+                    "focus=\(focusedStatus.rawValue)"
+            )
+            Thread.sleep(forTimeInterval: 0.2)
         }
-        Thread.sleep(forTimeInterval: 0.05)
+        var pressStatus: AXError = .failure
+        var selectedStatus: AXError = .failure
+        for _ in 1 ... 3 {
+            pressStatus = AXUIElementPerformAction(record.element, kAXPressAction as CFString)
+            selectedStatus = AXUIElementSetAttributeValue(
+                record.element, kAXSelectedAttribute as CFString, kCFBooleanTrue
+            )
+            Thread.sleep(forTimeInterval: 0.2)
+            if attributeBool(record.element, kAXSelectedAttribute) == true { break }
+        }
+        if attributeBool(record.element, kAXSelectedAttribute) != true {
+            guard let regionFrame = frame(record.element) else {
+                discoveryLog("select: region frame unavailable")
+                throw LogicMIDIRegionScriptingError.regionNotFound
+            }
+            let applicationWindows = windows(application)
+            let frontWindows: [AXUIElement]
+            if let tracksWindow = cachedTracksWindow,
+               let tracksIndex = applicationWindows.firstIndex(where: { CFEqual($0, tracksWindow) }) {
+                frontWindows = Array(applicationWindows.prefix(upTo: tracksIndex))
+            } else {
+                frontWindows = []
+            }
+            let candidates = [
+                CGPoint(x: regionFrame.midX, y: regionFrame.midY),
+                CGPoint(x: regionFrame.minX + 4, y: regionFrame.midY),
+                CGPoint(x: regionFrame.maxX - 4, y: regionFrame.midY),
+                CGPoint(x: regionFrame.minX + regionFrame.width * 0.25, y: regionFrame.midY),
+                CGPoint(x: regionFrame.minX + regionFrame.width * 0.75, y: regionFrame.midY),
+            ]
+            var frontWindowFrames = frontWindows.compactMap(frame)
+            var visiblePoint = candidates.first(where: { point in
+                !frontWindowFrames.contains(where: { $0.contains(point) })
+            })
+            if visiblePoint == nil {
+                var closedObstruction = false
+                for window in frontWindows where attributeBool(window, kAXModalAttribute) != true {
+                    guard let windowFrame = frame(window), candidates.allSatisfy(windowFrame.contains),
+                          let closeButton = elementAttribute(window, kAXCloseButtonAttribute),
+                          AXUIElementPerformAction(closeButton, kAXPressAction as CFString) == .success else {
+                        continue
+                    }
+                    discoveryLog("select: closed obstructing window \(attributeString(window, kAXTitleAttribute) ?? "untitled")")
+                    closedObstruction = true
+                }
+                if closedObstruction {
+                    Thread.sleep(forTimeInterval: 0.3)
+                    _ = AXUIElementPerformAction(record.element, kAXPressAction as CFString)
+                    _ = AXUIElementSetAttributeValue(
+                        record.element, kAXSelectedAttribute as CFString, kCFBooleanTrue
+                    )
+                    Thread.sleep(forTimeInterval: 0.2)
+                    let updatedWindows = windows(application)
+                    if let tracksWindow = cachedTracksWindow,
+                       let tracksIndex = updatedWindows.firstIndex(where: { CFEqual($0, tracksWindow) }) {
+                        frontWindowFrames = updatedWindows.prefix(upTo: tracksIndex).compactMap(frame)
+                    } else {
+                        frontWindowFrames = []
+                    }
+                    visiblePoint = candidates.first(where: { point in
+                        !frontWindowFrames.contains(where: { $0.contains(point) })
+                    })
+                }
+            }
+            if attributeBool(record.element, kAXSelectedAttribute) != true,
+               let visiblePoint {
+                click(at: visiblePoint)
+            } else if attributeBool(record.element, kAXSelectedAttribute) != true {
+                discoveryLog("select: region fully obscured by a floating window")
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.2)
+        discoveryLog(
+            "select: press=\(pressStatus.rawValue) set-selected=\(selectedStatus.rawValue) " +
+                "selected-read=\(attributeBool(record.element, kAXSelectedAttribute) ?? false)"
+        )
+    }
+
+    /// Menu bars of background applications are not exposed through
+    /// Accessibility, so Logic must be active before menu dispatch.
+    /// Activation through the Apple Event works from background helper
+    /// processes where NSRunningApplication.activate does not.
+    private func activateLogic() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", "tell application id \"com.apple.logic10\" to activate"]
+        try? process.run()
+        let deadline = Date().addingTimeInterval(5)
+        while process.isRunning, Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+        if process.isRunning { process.terminate() }
+        if NSWorkspace.shared.frontmostApplication?.bundleIdentifier != "com.apple.logic10" {
+            let launcher = Process()
+            launcher.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            launcher.arguments = ["-a", "Logic Pro"]
+            try? launcher.run()
+            let launcherDeadline = Date().addingTimeInterval(5)
+            while launcher.isRunning, Date() < launcherDeadline {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            if launcher.isRunning { launcher.terminate() }
+        }
+        let settleDeadline = Date().addingTimeInterval(5)
+        while NSWorkspace.shared.frontmostApplication?.bundleIdentifier != "com.apple.logic10",
+              Date() < settleDeadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
     }
 
     private func performMenuItem(title: String) throws {
+        if NSWorkspace.shared.frontmostApplication?.bundleIdentifier != "com.apple.logic10" {
+            activateLogic()
+        }
         let application = try logicApplication(requireFocus: true)
         try rejectModal(application)
-        guard let item = descendants(application, maximum: 12_000).first(where: {
-            attributeString($0, kAXRoleAttribute) == kAXMenuItemRole &&
-                attributeString($0, kAXTitleAttribute) == title &&
-                attributeBool($0, kAXEnabledAttribute) != false
-        }), AXUIElementPerformAction(item, kAXPressAction as CFString) == .success else {
+        // Logic validates dynamic items only while their top-level menu is
+        // open. A dormant application-wide AX walk can therefore report an
+        // item as absent or disabled even when the current selection supports
+        // it. Open each top-level menu before searching its populated subtree.
+        var pressed = false
+        var lastStatus: AXError = .attributeUnsupported
+        var openedMenu: AXUIElement?
+        for attempt in 1 ... 5 {
+            let menuBarItems = descendants(application, maximum: 500).filter {
+                attributeString($0, kAXRoleAttribute) == kAXMenuBarItemRole &&
+                    attributeBool($0, kAXEnabledAttribute) != false
+            }
+            for menuBarItem in menuBarItems {
+                guard AXUIElementPerformAction(menuBarItem, kAXPressAction as CFString) == .success else {
+                    continue
+                }
+                Thread.sleep(forTimeInterval: 0.1)
+                if let item = descendants(menuBarItem, maximum: 4_000).first(where: {
+                    attributeString($0, kAXRoleAttribute) == kAXMenuItemRole &&
+                        attributeString($0, kAXTitleAttribute) == title &&
+                        attributeBool($0, kAXEnabledAttribute) != false
+                }) {
+                    lastStatus = AXUIElementPerformAction(item, kAXPressAction as CFString)
+                    if lastStatus == .success {
+                        openedMenu = descendants(menuBarItem, maximum: 50).first {
+                            attributeString($0, kAXRoleAttribute) == kAXMenuRole
+                        }
+                        pressed = true
+                        break
+                    }
+                }
+                pressKey(53)
+            }
+            if pressed { break }
+            discoveryLog("menu \(title): attempt \(attempt) missed (walk or press)")
+            Thread.sleep(forTimeInterval: 0.4)
+        }
+        guard pressed else {
+            discoveryLog("menu \(title): item missing or press failed status=\(lastStatus.rawValue)")
             throw LogicMIDIRegionScriptingError.commandFailed
+        }
+        if let openedMenu {
+            _ = AXUIElementPerformAction(openedMenu, "AXCancel" as CFString)
         }
         Thread.sleep(forTimeInterval: 0.1)
     }
@@ -658,7 +958,10 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
             throw LogicMIDIRegionScriptingError.logicNotRunning
         }
         if requireFocus, NSWorkspace.shared.frontmostApplication?.processIdentifier != logic.processIdentifier {
-            throw LogicMIDIRegionScriptingError.logicNotFocused
+            activateLogic()
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier != logic.processIdentifier {
+                throw LogicMIDIRegionScriptingError.logicNotFocused
+            }
         }
         return AXUIElementCreateApplication(logic.processIdentifier)
     }
@@ -698,6 +1001,13 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
     private func focusedWindow(_ application: AXUIElement) -> AXUIElement? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return (value as! AXUIElement)
+    }
+
+    private func elementAttribute(_ element: AXUIElement, _ name: String) -> AXUIElement? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success,
               let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
         return (value as! AXUIElement)
     }
@@ -743,13 +1053,122 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
         return CGRect(origin: point, size: size)
     }
 
+    /// Directory of the frontmost open Logic document. The export save panel
+    /// defaults to this directory, so exports land there without driving the
+    /// unreliable go-to-folder navigation sheet.
+    private func currentDocumentDirectory() throws -> URL? {
+        if let cached = cachedDocumentDirectory { return cached }
+        guard NSWorkspace.shared.runningApplications.contains(where: {
+            $0.bundleIdentifier == "com.apple.logic10"
+        }) else { return nil }
+        let source = """
+        with timeout of 5 seconds
+        tell application id "com.apple.logic10"
+            if (count documents) is 0 then return ""
+            return (path of front document as text)
+        end tell
+        end timeout
+        """
+        // osascript keeps the Apple Event reply pump out of this process;
+        // in-process NSAppleScript can deadlock when the calling thread
+        // drains the main queue. Retry briefly: Logic may still be settling
+        // after a modal save-panel session.
+        for _ in 0..<20 {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            process.arguments = ["-e", source]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+            guard (try? process.run()) != nil else { return nil }
+            let deadline = Date().addingTimeInterval(10)
+            var output = Data()
+            while Date() < deadline {
+                let chunk = pipe.fileHandleForReading.availableData
+                if !chunk.isEmpty { output.append(chunk) }
+                if !process.isRunning { break }
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+            if process.isRunning {
+                process.terminate()
+            } else if var path = String(data: output, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                !path.isEmpty, path != "missing value" {
+                if !path.hasPrefix("/") {
+                    path = path.hasPrefix("Macintosh HD:")
+                        ? String(path.dropFirst("Macintosh HD:".count)) : path
+                    path = "/" + path.replacingOccurrences(of: ":", with: "/")
+                }
+                let directory = URL(fileURLWithPath: path).deletingLastPathComponent()
+                cachedDocumentDirectory = directory
+                return directory
+            }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        discoveryLog("currentDocumentDirectory: exhausted retries")
+        return nil
+    }
+
+    /// Synthetic CGEvents do not reach Logic's remotely-hosted save/open panels,
+    /// so key presses are delivered through System Events keystrokes, which
+    /// target the frontmost application's focused element.
     private func pressKey(_ code: CGKeyCode, flags: CGEventFlags = []) {
-        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true),
-              let up = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false) else { return }
-        down.flags = flags
-        up.flags = flags
+        var modifiers: [String] = []
+        if flags.contains(.maskCommand) { modifiers.append("command down") }
+        if flags.contains(.maskShift) { modifiers.append("shift down") }
+        if flags.contains(.maskAlternate) { modifiers.append("option down") }
+        if flags.contains(.maskControl) { modifiers.append("control down") }
+        let modifierList = modifiers.isEmpty ? "" : " using {" + modifiers.joined(separator: ", ") + "}"
+        let source = "tell application \"System Events\" to key code \(Int(code))\(modifierList)"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", source]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+            let deadline = Date().addingTimeInterval(5)
+            while process.isRunning, Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+            if process.isRunning { process.terminate() }
+        } catch {
+            discoveryLog("pressKey: \(error.localizedDescription)")
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+
+    private func typeText(_ text: String) {
+        let escaped = text
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = [
+            "-e", "tell application \"System Events\" to keystroke \"\(escaped)\"",
+        ]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+            let deadline = Date().addingTimeInterval(5)
+            while process.isRunning, Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+            if process.isRunning { process.terminate() }
+        } catch {
+            discoveryLog("typeText: \(error.localizedDescription)")
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+
+    private func click(at point: CGPoint) {
+        guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
+              let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else {
+            return
+        }
         down.post(tap: .cghidEventTap)
+        Thread.sleep(forTimeInterval: 0.06)
         up.post(tap: .cghidEventTap)
+        Thread.sleep(forTimeInterval: 0.1)
     }
 
     private func drag(from start: CGPoint, to finish: CGPoint) throws {

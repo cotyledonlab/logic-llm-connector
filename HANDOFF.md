@@ -1,178 +1,139 @@
-# Handoff — 2026-08-23 (evening, after computer-use debugging session)
+# Handoff — 2026-08-29 — MIDI import panel isolated
 
-## Repository state
+## Scope and repository state
 
-- Repository: `cotyledonlab/logic-llm-connector`, branch `main`
-- Latest pushed commit: `e05f5ec` (handoff checkpoint). Ticket 0012 implementation
-  commits `b71b5d3`, `c245b80`, `31c5a08`, `5c0c719` are pushed.
-- **Six uncommitted modified files** (was five in the previous handoff; one was
-  added). All contain substantive, working fixes — preserve them:
-  1. `native/LogicCompanion/Sources/LogicBridgeCore/TestProjectLifecycle.swift`
-     - `observeUsingAccessibility()` now ALWAYS returns `.unavailable` when the
-       AX walk yields no logicx document (empty windows list, plugin windows,
-       malformed Logic 12 proxies, windowless-open-document states) so the
-       Apple Events fallback decides document identity. This fixed false
-       "no project open" observations.
-     - `execute()` now runs AppleScript through the **`/usr/bin/osascript`
-       subprocess** (bounded 30s manual wait, stderr-based -1743 detection)
-       instead of in-process `NSAppleScript`, which deadlocks when the calling
-       thread drains the main queue (swift-testing does).
-  2. `native/LogicCompanion/Sources/LogicBridgeCore/MacLogicMIDIRegionScripting.swift`
-     Major rework of the panel automation (details in "What was broken" below):
-     - `pressKey` → System Events `key code N` via osascript subprocess
-       (raw CGEvents never reach Logic's remotely-hosted save/open panels).
-     - Export flow: save panel defaults to the open project's directory.
-       `exportedNotes` queries the document directory once (osascript, retried,
-       cached in `cachedDocumentDirectory`), sets a unique filename
-       `llm-export-<uuid>` WITHOUT extension (panel mangles names that carry
-       `.mid`), presses Save via AX, then globs the directory for `stem*`.
-     - Import flow: staged file is written INTO the document directory
-       (`llm-import-<uuid>.mid`); `completeOpenPanel(filename:)` waits for the
-       panel titled "Import"/"MIDI"/with an Open button (search 2000 nodes),
-       finds the file's AXStaticText row, presses it, then Return + Open.
-       **This step is the current blocker** — see below.
-     - `select()` raises the cached Tracks window, tolerates AXPress failure,
-       falls back to AXSelected when settable, retries press once after 0.3s.
-     - `exportedNotes` re-resolves the live region element by signature
-       (trackID/name/position/length) before selecting — modal panel sessions
-       rebuild the arrangement AX tree and invalidate captured elements
-       (-25202 errors otherwise).
-     - `setSegments` accepts fewer sliders than values (condensed LCD shows
-       only bar/beat; old code required exactly 4).
-     - `performMenuItem` activates Logic first via `activateLogic()`
-       (osascript `tell app id ... to activate`) because background apps'
-       menu bars are not AX-exposed; `logicApplication(requireFocus: true)`
-       also activates before throwing.
-     - `discoveryLog` gated by `LOGIC_MIDI_ADAPTER_DISCOVERY=1` prints
-       `MIDI_ADAPTER_STAGE ...` lines; several step logs were added during
-       debugging and are useful — keep or trim.
-  3. `native/LogicCompanion/Tests/LogicBridgeCoreTests/MacLogicMIDIRegionScriptingTests.swift`
-     (the opt-in four-bar real-Logic test; unchanged in content from the
-     earlier handoff but still modified/uncommitted)
-  4. `native/LogicCompanion/Tests/LogicBridgeCoreTests/TestProjectLifecycleTests.swift`
-     (absent-workspace cleanup regression)
-  5. `package.json` (`test:midi-integration` script)
-  6. `tests/integration/doctor-stack.test.ts`
-     (packaged lifecycle + native four-bar test; still contains temporary
-     `/tmp/logic-midi-acceptance-stages.log` stage logging and a stray
-     `writeFileSync` stage reset in the first, skipped doctor test — REMOVE
-     before committing)
+- Repository: `cotyledonlab/logic-llm-connector`
+- Branch: `main`
+- Starting/pushed HEAD: `0767173 docs(handoff): capture MIDI panel-automation debugging session`
+- Six implementation files are modified and uncommitted:
+  - `native/LogicCompanion/Sources/LogicBridgeCore/MacLogicMIDIRegionScripting.swift`
+  - `native/LogicCompanion/Sources/LogicBridgeCore/TestProjectLifecycle.swift`
+  - `native/LogicCompanion/Tests/LogicBridgeCoreTests/MacLogicMIDIRegionScriptingTests.swift`
+  - `native/LogicCompanion/Tests/LogicBridgeCoreTests/TestProjectLifecycleTests.swift`
+  - `package.json`
+  - `tests/integration/doctor-stack.test.ts`
+- Preserve all six files. They include substantive fixes from the prior session plus the work described below.
+- Ticket 0012 is not complete. Do not mark it complete until the real-Logic MIDI acceptance is green.
 
-- Native unit tests: **69/69 pass** (`cd native/LogicCompanion && swift test`).
-- The four real-Logic-only tests remain skipped without env flags.
+## User constraint
 
-## What was broken and what fixed it (context for the next agent)
+Keep the next slice small. The user explicitly wants context/time conserved and does not want repeated full acceptance runs that cycle through region export menus. Use the narrow import-panel test below. Stop after one bounded experiment if it does not produce new evidence.
 
-The real-Logic MIDI acceptance never ran before today. Root causes found,
-all fixed in the working tree:
+## What is working
 
-1. **In-process NSAppleScript deadlocks** under swift-testing (calling thread
-   drains the main queue; the Apple Event reply can never be pumped). Fixed by
-   routing ALL AppleScript (execute, pressKey, currentDocumentDirectory,
-   activateLogic) through the osascript SUBPROCESS.
-2. **Raw CGEvent keyboard posts never reach Logic's panels** (they are hosted
-   by the openAndSavePanelService XPC). System Events `key code` works.
-   Mouse CGEvents DO work (used by click/drag).
-3. **Go-to-folder sheet (Cmd+Shift+G) is unusable programmatically**: its text
-   field needs a real mouse click for keyboard focus, and Return only commits
-   then. Abandoned entirely: save panel defaults to the project directory, so
-   exports save there and imports stage files there. No navigation needed.
-4. **Save panel mangles filenames ending in `.mid`** (produces
-   `<name>.mid     .mid`). Set the stem only.
-5. **AX tree invalidation after each modal panel session**: region elements
-   captured before an export die (-25202). Re-resolve by signature per export.
-6. **Condensed LCD**: only 2 playhead sliders exist; setSegments required 4.
-7. **Background menu bars aren't AX-visible**: activate Logic (via AE) before
-   menu dispatch.
-8. **observe() false negatives**: windowless-open-document and proxy-window
-   states now defer to the Apple Events fallback.
+- `swift test` passed 70/70 tests after adding the narrow import-panel test and before the final directory-path adjustment. The final code still compiles in the targeted test build.
+- `npm run typecheck` passed in this session.
+- A full real-Logic run successfully exported all four existing regions multiple times. Each temporary SMF was 131–132 bytes and was deleted after decoding.
+- The adapter stages the import SMF in `~/Downloads` and removes it with `defer`, including after failure.
+- Logic activation was flaky through Apple Events alone. Both the adapter and real-Logic test helper now fall back to `/usr/bin/open -a "Logic Pro"`; this made Logic frontmost reliably.
+- The managed project identity is observable through Apple Events.
 
-## Verified working state (screen awake + unlocked)
+## Narrow acceptance added
 
-- Initial four-bar observe: PASSES end-to-end — all 4 regions found with
-  exact notes via SMF export (131/132 bytes each), repeatedly.
-- `create` (import) reaches the Open panel and finds it, but the staged file
-  ROW is not found in the panel browser — "open panel: staged file row not
-  found". Manual exploration showed the panel browser may display an empty or
-  wrong folder (sidebar-only static texts). NEXT STEP is to fix row selection:
-  options: (a) check the panel's current directory and use Cmd+Shift+G with
-  the click-field-then-Return dance (works manually: click the sheet's text
-  field via CGEvent mouse click at its frame, AX-set value, key code 36,
-  then key code 36 again to Open); (b) type-select by keystroking the
-  filename; (c) investigate why the browser shows no rows — possibly the
-  browser needs the panel expanded or the directory refreshed.
-- After create succeeds, the rest of the four-bar test (rename, move, resize,
-  update note, duplicate, split, playback verify, delete, undo) has never run
-  — expect more panel-session fallout to fix, but the patterns above are the
-  toolkit.
+`MacLogicMIDIRegionScripting` now has a `#if DEBUG` internal seam:
 
-## Environment / operational facts learned
+```swift
+exerciseImportPanelForAcceptance(trackID:position:length:notes:)
+```
 
-- **The Mac locking/sleeping breaks everything** (black screenshots, AX trees
-  degrade to recursive "Logic Pro" proxies, activations fail). Before running
-  acceptance: unlock the Mac, then `caffeinate -d -t 1800 &` to keep the
-  display awake. Verify with `screencapture -x` that the screen is not black.
-- A killed test leaves orphaned modal panels ("Save MIDI File as:", "Import")
-  that block all subsequent Apple Events. Dismiss via System Events Cancel
-  press (deep walk with `entire contents`) while Logic is frontmost, or
-  `pkill -x "Logic Pro"` and relaunch.
-- After closing documents via Apple Events, Logic often holds the doc with NO
-  AX windows. observe() handles it, but rawRegions (Tracks window) will not —
-  reopen the project and verify windows via System Events first.
-- The managed Test Projects dir is `~/Library/Application Support/Logic LLM
-  Connector/Test Projects/` (NOT ~/Music — old handoff path was wrong).
-  Stale workspace dirs there are safe to delete when Logic has 0 documents.
-- The source fixture `~/Music/Logic/LLM Jazz.logicx` has never been modified.
-- A manual-test workspace exists at
-  `.../Test Projects/manual-test/LLM Jazz.logicx` (created by debugging; the
-  swift four-bar test was driven against it directly with
-  `LOGIC_MANAGED_TEST_PROJECT_PATH`). Safe to delete.
-- Safari was fullscreen on Space 1 during the session; clicks/activations
-  interacted with it. Be careful with blind coordinate clicks.
+It deliberately avoids `observeRegions()` and therefore performs no MIDI exports. It:
 
-## How to run the four-bar test standalone (fast iteration)
+1. Records the current raw region elements.
+2. Imports a one-note staged MIDI file through the real Logic UI.
+3. Finds the newly created raw region.
+4. Deletes the probe region before returning.
+
+The opt-in test is:
+
+```text
+LogicBridgeCoreTests.realLogicMIDIImportPanelRoundTrip
+```
+
+Run only it with:
 
 ```sh
-# Logic running, managed copy open, screen unlocked, caffeinate -d running
 cd native/LogicCompanion
-LOGIC_MIDI_INTEGRATION_TEST=1 \
+LOGIC_MIDI_IMPORT_PANEL_TEST=1 \
 LOGIC_MIDI_ADAPTER_DISCOVERY=1 \
 LOGIC_MANAGED_TEST_PROJECT_PATH="$HOME/Library/Application Support/Logic LLM Connector/Test Projects/manual-test/LLM Jazz.logicx" \
-swift test --filter LogicBridgeCoreTests.realLogicMIDIOperationsRoundTripFourBars
+caffeinate -d -i -m swift test --filter LogicBridgeCoreTests.realLogicMIDIImportPanelRoundTrip
 ```
 
-Stage log appears on stdout as `MIDI_ADAPTER_STAGE ...` lines.
+This test reaches the Import panel in about ten seconds and does not open any export/save menus.
 
-## Full packaged acceptance (the actual ticket gate)
+## Exact current blocker
 
-```sh
-LOGIC_TEST_PROJECT_FIXTURE="$HOME/Music/Logic/LLM Jazz.logicx" \
-npm run test:midi-integration
+The narrow test consistently reaches:
+
+```text
+MIDI_ADAPTER_STAGE import: staged llm-import-<uuid>.mid
+MIDI_ADAPTER_STAGE import: track selected
+MIDI_ADAPTER_STAGE import: playhead set
+MIDI_ADAPTER_STAGE import: menu dispatched
+MIDI_ADAPTER_STAGE open panel found
+MIDI_ADAPTER_STAGE open panel: Go to Folder submit=0
+MIDI_ADAPTER_STAGE open panel: Go to Folder sheet did not dismiss
 ```
 
-Requires: Logic running with NO document open (test precondition), screen
-unlocked. It copies the fixture, opens it via the Companion lifecycle, runs
-the native four-bar test inside, then cleans up. Watch
-`/tmp/logic-midi-acceptance-stages.log` (temporary; stages: opened →
-reopened → native-start → native-pass → cleanup-done).
+`0` is `AXError.success`, but the sheet remains visible.
 
-## Current machine state (as of handoff)
+Read-only AX inspection proved:
 
-- Logic Pro running (PID 79282), 0 documents, one small startup dialog
-  (260x284 at 605,193) on a LOCKED screen — dismiss or relaunch Logic first.
-- Two stale managed workspaces in Test Projects (`3f69b7c2…`, `d722e132…`)
-  — safe to delete when Logic has 0 documents.
-- `/tmp/swift-test.log`, `/tmp/midi-run.log` hold last run output.
+- The Go-to sheet exists as an `AXSheet` under the `Import` window.
+- Its text field contains the exact staged path and reports focused `true`.
+- The field exposes `AXConfirm`.
+- The sheet contains exactly one untitled `AXButton`, almost certainly the visible Go button.
+- Calling `AXConfirm` reports success but does not dismiss the sheet.
+- The current code asks for `kAXDefaultButtonAttribute` and falls back to `AXConfirm`, but the log does not say which branch ran. It is likely that `kAXDefaultButtonAttribute` is absent and the explicit untitled button has never actually been pressed.
+- Supplying the full file path and supplying the containing directory (`~/Downloads`) both left the sheet open with the current submit logic.
 
-## Completion checklist (updated)
+## Best next bounded experiment
 
-1. Unlock Mac, `caffeinate -d -t 1800 &`, dismiss/relaunch Logic.
-2. Fix `completeOpenPanel` row selection (the one remaining known blocker).
-3. Drive the standalone four-bar test to green against `manual-test`.
-4. Reset: close docs, remove manual-test + stale workspaces, fresh fixture.
-5. Run the full packaged acceptance to `native-pass` and `cleanup-done`.
-6. Remove temporary diagnostics (doctor-stack stage log/writeFileSync; trim
-   discoveryLog lines if desired), run: typecheck, build, npm test,
-   test:package, then the packaged acceptance again.
-7. Mark ticket 0012 + index complete, commit (all six files), update this
-   handoff for 0013, push, leave worktree and Test Projects clean.
+Do not run the four-bar acceptance.
+
+In `completeOpenPanel(path:)`:
+
+1. After setting the Go-to field to the containing directory, find the first `AXButton` in `descendants(sheet, maximum: ...)` explicitly.
+2. Log whether `kAXDefaultButtonAttribute` existed so the branch is unambiguous.
+3. Prefer a real `click(at:)` on the untitled button's frame; the panel service has previously ignored semantic AX actions while accepting real mouse clicks.
+4. Wait for the sheet to disappear.
+5. If it disappears, wait for the exact staged filename `AXStaticText`, click its frame once, and press the enabled `Import` button.
+6. Run the narrow test once.
+
+If the real click still does not dismiss the sheet, stop. Inspect the sheet button's frame/actions and take one screenshot rather than retrying the test.
+
+## Current UI/machine state
+
+- Logic Pro is running with the managed project:
+  `~/Library/Application Support/Logic LLM Connector/Test Projects/manual-test/LLM Jazz.logicx`
+- The last failed narrow test left the Import panel and Go-to sheet open.
+- The staged UUID file named in that sheet has already been removed by `defer`.
+- No `swift test`, test bundle, or test `caffeinate` process is running.
+- One old unrelated probe remains: `~/Downloads/llm-import-probe.mid` (41 bytes).
+- Logic may show this launch alert after restart:
+  `The last selected audio interface is not available.`
+  Pressing its `OK` button is sufficient; do not open Settings.
+- The source fixture remains:
+  `~/Music/Logic/LLM Jazz.logicx`
+- The managed project copy is approximately 652 KB. Temporary exports are tiny and do not accumulate.
+
+## Safe reset before a narrow run
+
+Because the current sheet points at a deleted staged file, cancel the sheet and Import panel or restart only Logic, reopening the managed copy. A Logic restart can show the audio-interface alert described above. Do not delete the source fixture.
+
+## Other existing changes that still need final cleanup
+
+- `TestProjectLifecycle.swift` uses bounded `/usr/bin/osascript` subprocesses instead of in-process `NSAppleScript` and defers ambiguous AX observations to Apple Events.
+- Lifecycle regression coverage for an already-absent workspace is present.
+- `package.json` contains `test:midi-integration`.
+- `doctor-stack.test.ts` contains the packaged MIDI acceptance wiring. Review it for temporary stage diagnostics before the final commit.
+- `MacLogicMIDIRegionScripting.swift` contains extensive `LOGIC_MIDI_ADAPTER_DISCOVERY=1` diagnostics and one duplicated `setSegments` comment that can be trimmed during final cleanup.
+
+## Completion path after the narrow test turns green
+
+1. Run all native tests.
+2. Run the standalone four-bar acceptance once against the managed copy.
+3. Run `npm run typecheck`, normal tests/build/package checks, then the packaged MIDI acceptance once.
+4. Remove temporary diagnostics from `doctor-stack.test.ts`; retain useful opt-in adapter diagnostics.
+5. Mark ticket 0012/index complete only after packaged acceptance passes.
+6. Commit with the workspace-required message format and push.

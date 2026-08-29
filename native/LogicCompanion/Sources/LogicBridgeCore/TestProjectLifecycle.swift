@@ -340,14 +340,31 @@ public final class TestProjectLifecycleController: ProjectLifecycleControlling, 
 
     public func cleanup(operationID: String, timeoutMilliseconds: Int) -> ProjectLifecycleResult {
         let startedAt = now()
-        guard let managed = lock.withLock({ managedProjectURL }), contains(managed) else {
+        guard let managed = lock.withLock({ managedProjectURL }) else {
             return result(
                 operationID: operationID,
                 action: .cleanup,
                 startedAt: startedAt,
                 status: .succeeded,
                 reliability: .verifiedDeterministic,
-                project: try? scripting.observe(),
+                project: nil,
+                managedURL: nil,
+                policyContext: false,
+                cleanupPerformed: true
+            )
+        }
+        guard contains(managed), fileManager.fileExists(atPath: managed.path) else {
+            lock.withLock {
+                managedProjectURL = nil
+                pendingOpenURL = nil
+            }
+            return result(
+                operationID: operationID,
+                action: .cleanup,
+                startedAt: startedAt,
+                status: .succeeded,
+                reliability: .verifiedDeterministic,
+                project: nil,
                 managedURL: nil,
                 policyContext: false,
                 cleanupPerformed: true
@@ -629,6 +646,7 @@ public struct MacLogicProjectScripting: LogicProjectScripting {
                   $0.bundleIdentifier == "com.apple.logic10"
               }) else { return .unavailable }
         let application = AXUIElementCreateApplication(logic.processIdentifier)
+        AXUIElementSetMessagingTimeout(application, 1.0)
         var windowsValue: CFTypeRef?
         guard AXUIElementCopyAttributeValue(
             application,
@@ -637,7 +655,17 @@ public struct MacLogicProjectScripting: LogicProjectScripting {
         ) == .success,
         let windows = windowsValue as? [AXUIElement] else { return .unavailable }
 
+        var sawWindowElement = false
         for window in windows {
+            AXUIElementSetMessagingTimeout(window, 1.0)
+            var roleValue: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(
+                window,
+                kAXRoleAttribute as CFString,
+                &roleValue
+            ) == .success,
+            roleValue as? String == kAXWindowRole else { continue }
+            sawWindowElement = true
             var documentValue: CFTypeRef?
             guard AXUIElementCopyAttributeValue(
                 window,
@@ -681,7 +709,16 @@ public struct MacLogicProjectScripting: LogicProjectScripting {
                 observedAt: Date()
             ))
         }
-        return .observed(nil)
+        // A window element that never yielded a bound .logicx document is an
+        // ambiguous state: the document may still be attaching after an open,
+        // or the window may be a plug-in/alert surface. Defer to Apple Events
+        // for authoritative document identity instead of claiming no project.
+        // Logic 12 can transiently return application proxies from AXWindows;
+        // treat that malformed tree as unavailable for the same reason.
+        // Empty or malformed window lists are both ambiguous: Logic can hold
+        // an open document with no AX windows after a modal panel session.
+        // Defer to Apple Events for authoritative document identity.
+        return .unavailable
     }
 
     public func open(projectAt url: URL) throws {
@@ -703,18 +740,47 @@ public struct MacLogicProjectScripting: LogicProjectScripting {
     }
 
     private func execute(_ source: String) throws -> String {
-        guard let script = NSAppleScript(source: source) else {
-            throw LogicProjectScriptingError.commandFailed
-        }
-        var details: NSDictionary?
-        let result = script.executeAndReturnError(&details)
-        if let details {
-            let number = details[NSAppleScript.errorNumber] as? Int
-            if number == -1743 { throw LogicProjectScriptingError.automationDenied }
+        // osascript keeps the Apple Event reply pump out of this process;
+        // in-process NSAppleScript can deadlock when the calling thread
+        // drains the main queue (e.g. under swift-testing).
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", source]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        let errorPipe = Pipe()
+        process.standardError = errorPipe
+        do {
+            try process.run()
+        } catch {
             if logicHasModalWindow() { throw LogicProjectScriptingError.dialogPresented }
             throw LogicProjectScriptingError.commandFailed
         }
-        return result.stringValue ?? ""
+        // Bounded manual wait: Apple Events to Logic carry their own timeout.
+        let deadline = Date().addingTimeInterval(30)
+        var output = Data()
+        while Date() < deadline {
+            if let chunk = try? pipe.fileHandleForReading.availableData, !chunk.isEmpty {
+                output.append(chunk)
+            }
+            if !process.isRunning { break }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        if process.isRunning {
+            process.terminate()
+            if logicHasModalWindow() { throw LogicProjectScriptingError.dialogPresented }
+            throw LogicProjectScriptingError.commandFailed
+        }
+        let stderr = (try? errorPipe.fileHandleForReading.readDataToEndOfFile()) ?? Data()
+        if let errorText = String(data: stderr, encoding: .utf8),
+           errorText.contains("Not authorized") || errorText.contains("-1743") {
+            throw LogicProjectScriptingError.automationDenied
+        }
+        if process.terminationStatus != 0 {
+            if logicHasModalWindow() { throw LogicProjectScriptingError.dialogPresented }
+            throw LogicProjectScriptingError.commandFailed
+        }
+        return String(data: output, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
     private func escape(_ value: String) -> String {
