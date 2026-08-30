@@ -135,12 +135,36 @@ and capture one screenshot. If the value matches but Return does not dismiss
 the sheet, stop and inspect whether the field's Return key event reaches the
 remote panel; do not retry the test.
 
+## 2026-08-30 keyboard-entry experiment result
+
+The prescribed keyboard-entry experiment was run once with the narrow test.
+It reached the Import panel, but the exact AX readback comparison was false.
+The requested single screenshot revealed that Command-Shift-G had been routed
+to Logic itself: it opened Logic's `Go To Position` sheet over the Import
+panel, rather than Finder's Go-to-Folder sheet. The typed Downloads path was
+then interpreted across Logic's musical-position fields. This explains why
+the expected directory never appeared in the field.
+
+The failed experimental source change was reverted and the test was not
+retried. The staged UUID file was removed by `defer`. The screenshot is a
+temporary local artifact at:
+
+```text
+/tmp/logic-import-panel.BddMiT/keyboard-entry-failed.png
+```
+
+The next bounded experiment should avoid keyboard shortcuts entirely. The
+Import panel visibly exposes `Downloads` in its sidebar, matching the adapter's
+staging directory. Click that sidebar item by its AX frame, wait for the exact
+staged filename, select it, and press the enabled `Import` button. Do not use
+Go-to-Folder or run the four-bar acceptance.
+
 ## Current UI/machine state
 
 - Logic Pro is running with the managed project:
   `~/Library/Application Support/Logic LLM Connector/Test Projects/manual-test/LLM Jazz.logicx`
-- The last failed narrow test left the Import panel and Go-to sheet open with
-  an empty, focused field.
+- The last failed narrow test left the Import panel and Logic's `Go To Position`
+  sheet open with the typed path distributed across its position fields.
 - The staged UUID file from that run has already been removed by `defer`.
 - No `swift test`, test bundle, or test `caffeinate` process is running.
 - One old unrelated probe remains: `~/Downloads/llm-import-probe.mid` (41 bytes).
