@@ -534,9 +534,8 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
         }
     }
 
-    /// Resolve the staged file through the Go to Folder sheet. The remote panel
-    /// service accepts the AX value only after a real click focuses the field;
-    /// one Return resolves the path and a second confirms the MIDI import.
+    /// Resolve the staged file through the Downloads sidebar item exposed by
+    /// the remote Import panel, then confirm the MIDI import.
     private func completeOpenPanel(path: String) throws {
         let application = try logicApplication(requireFocus: false)
         let panel = try waitForWindow(application: application) { window in
@@ -553,71 +552,46 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
         _ = AXUIElementSetAttributeValue(panel, kAXMainAttribute as CFString, kCFBooleanTrue)
         _ = AXUIElementSetAttributeValue(panel, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         Thread.sleep(forTimeInterval: 0.2)
-        pressKey(5, flags: [.maskCommand, .maskShift])
-        let sheet: AXUIElement
-        do {
-            sheet = try waitForElement(root: panel) {
-                attributeString($0, kAXRoleAttribute) == kAXSheetRole
-            }
-        } catch {
-            discoveryLog("open panel: Go to Folder sheet did not appear")
-            throw error
-        }
-        guard let field = descendants(sheet, maximum: 500).first(where: {
-            attributeString($0, kAXRoleAttribute) == kAXTextFieldRole
-        }), let fieldFrame = frame(field) else {
-            discoveryLog("open panel: Go to Folder field missing")
-            throw LogicMIDIRegionScriptingError.commandFailed
-        }
-        click(at: CGPoint(x: fieldFrame.midX, y: fieldFrame.midY))
         let stagedFile = URL(fileURLWithPath: path)
-        let directory = stagedFile.deletingLastPathComponent().path
-        guard AXUIElementSetAttributeValue(
-            field, kAXValueAttribute as CFString, directory as CFTypeRef
-        ) == .success else {
-            discoveryLog("open panel: could not set Go to Folder path")
+        let downloads = descendants(panel, maximum: 2_000).filter {
+            attributeString($0, kAXRoleAttribute) == kAXStaticTextRole &&
+                [
+                    attributeString($0, kAXTitleAttribute),
+                    attributeString($0, kAXValueAttribute),
+                ].contains("Downloads") && frame($0) != nil
+        }.min { (frame($0)?.minX ?? .greatestFiniteMagnitude) <
+            (frame($1)?.minX ?? .greatestFiniteMagnitude) }
+        guard let downloads, let downloadsFrame = frame(downloads) else {
+            discoveryLog("open panel: Downloads sidebar item missing")
             throw LogicMIDIRegionScriptingError.commandFailed
         }
-        let goStatus: AXError
-        if let go = elementAttribute(sheet, kAXDefaultButtonAttribute) {
-            goStatus = AXUIElementPerformAction(go, kAXPressAction as CFString)
-        } else {
-            goStatus = AXUIElementPerformAction(field, "AXConfirm" as CFString)
-        }
-        discoveryLog("open panel: Go to Folder submit=\(goStatus.rawValue)")
-        if goStatus != .success { pressKey(36) }
-
-        let sheetDeadline = Date().addingTimeInterval(5)
-        while descendants(panel, maximum: 2_000).contains(where: { CFEqual($0, sheet) }),
-              Date() < sheetDeadline {
-            Thread.sleep(forTimeInterval: 0.05)
-        }
-        guard !descendants(panel, maximum: 2_000).contains(where: { CFEqual($0, sheet) }) else {
-            discoveryLog("open panel: Go to Folder sheet did not dismiss")
-            throw LogicMIDIRegionScriptingError.commandFailed
-        }
-        discoveryLog("open panel: staged file resolved")
+        click(at: CGPoint(x: downloadsFrame.midX, y: downloadsFrame.midY))
+        discoveryLog("open panel: Downloads sidebar clicked")
 
         let row = try waitForElement(root: panel) {
-            attributeString($0, kAXRoleAttribute) == kAXStaticTextRole &&
+            [kAXStaticTextRole, kAXTextFieldRole].contains(
+                attributeString($0, kAXRoleAttribute) ?? ""
+            ) &&
                 attributeString($0, kAXValueAttribute) == stagedFile.lastPathComponent
         }
-        guard let rowFrame = frame(row) else {
-            discoveryLog("open panel: staged file row has no frame")
+        guard let rowGroup = elementAttribute(row, kAXParentAttribute),
+              let list = elementAttribute(rowGroup, kAXParentAttribute) else {
+            discoveryLog("open panel: staged file list hierarchy missing")
             throw LogicMIDIRegionScriptingError.commandFailed
         }
-        click(at: CGPoint(x: rowFrame.midX, y: rowFrame.midY))
-        Thread.sleep(forTimeInterval: 0.2)
-
-        let panelElements = descendants(panel, maximum: 2_000)
-        guard let confirm = panelElements.first(where: {
+        _ = AXUIElementSetAttributeValue(
+            list, kAXSelectedChildrenAttribute as CFString, [rowGroup] as CFArray
+        )
+        let confirm = try waitForElement(root: panel) {
             attributeString($0, kAXRoleAttribute) == kAXButtonRole &&
                 ["Open", "Import"].contains(attributeString($0, kAXTitleAttribute) ?? "") &&
-                attributeBool($0, kAXEnabledAttribute) != false
-        }), AXUIElementPerformAction(confirm, kAXPressAction as CFString) == .success else {
-            discoveryLog("open panel: enabled confirmation button missing")
+                attributeBool($0, kAXEnabledAttribute) == true
+        }
+        guard AXUIElementPerformAction(confirm, kAXPressAction as CFString) == .success else {
+            discoveryLog("open panel: enabled confirmation button could not be pressed")
             throw LogicMIDIRegionScriptingError.commandFailed
         }
+        discoveryLog("open panel: staged file selected and confirmed")
         let dismissalDeadline = Date().addingTimeInterval(10)
         while windows(application).contains(where: { CFEqual($0, panel) }),
               Date() < dismissalDeadline {
@@ -626,6 +600,36 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
         guard !windows(application).contains(where: { CFEqual($0, panel) }) else {
             discoveryLog("open panel: confirmation did not dismiss panel")
             throw LogicMIDIRegionScriptingError.commandFailed
+        }
+        let tempoPromptDeadline = Date().addingTimeInterval(3)
+        var tempoPrompt: AXUIElement?
+        repeat {
+            tempoPrompt = windows(application).first { window in
+                descendants(window, maximum: 500).contains {
+                    attributeString($0, kAXValueAttribute) == "Also import tempo information?"
+                }
+            }
+            if tempoPrompt == nil { Thread.sleep(forTimeInterval: 0.05) }
+        } while tempoPrompt == nil && Date() < tempoPromptDeadline
+        if let tempoPrompt {
+            guard let no = descendants(tempoPrompt, maximum: 500).first(where: {
+                attributeString($0, kAXRoleAttribute) == kAXButtonRole &&
+                    attributeString($0, kAXTitleAttribute) == "No" &&
+                    attributeBool($0, kAXEnabledAttribute) != false
+            }), AXUIElementPerformAction(no, kAXPressAction as CFString) == .success else {
+                discoveryLog("open panel: tempo prompt No button missing")
+                throw LogicMIDIRegionScriptingError.commandFailed
+            }
+            let tempoDismissalDeadline = Date().addingTimeInterval(5)
+            while windows(application).contains(where: { CFEqual($0, tempoPrompt) }),
+                  Date() < tempoDismissalDeadline {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            guard !windows(application).contains(where: { CFEqual($0, tempoPrompt) }) else {
+                discoveryLog("open panel: tempo prompt did not dismiss")
+                throw LogicMIDIRegionScriptingError.commandFailed
+            }
+            discoveryLog("open panel: tempo import declined")
         }
         discoveryLog("open panel confirmed")
         Thread.sleep(forTimeInterval: 0.5)

@@ -86,7 +86,7 @@ func realLogicMIDIImportPanelRoundTrip() throws {
     let managedPath = try #require(ProcessInfo.processInfo.environment["LOGIC_MANAGED_TEST_PROJECT_PATH"])
     let projectScripting = MacLogicProjectScripting()
     let observedProject = try #require(try projectScripting.observe())
-    #expect(URL(fileURLWithPath: observedProject.path).standardizedFileURL.path ==
+    try #require(URL(fileURLWithPath: observedProject.path).standardizedFileURL.path ==
         URL(fileURLWithPath: managedPath).standardizedFileURL.path)
 
     let logic = try #require(NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.logic10").first)
@@ -120,7 +120,7 @@ func realLogicMIDIOperationsRoundTripFourBars() throws {
     let managedPath = try #require(ProcessInfo.processInfo.environment["LOGIC_MANAGED_TEST_PROJECT_PATH"])
     let projectScripting = MacLogicProjectScripting()
     let observedProject = try #require(try projectScripting.observe())
-    #expect(URL(fileURLWithPath: observedProject.path).standardizedFileURL.path ==
+    try #require(URL(fileURLWithPath: observedProject.path).standardizedFileURL.path ==
         URL(fileURLWithPath: managedPath).standardizedFileURL.path)
 
     let logic = try #require(NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.logic10").first)

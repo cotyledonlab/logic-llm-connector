@@ -159,12 +159,58 @@ staging directory. Click that sidebar item by its AX frame, wait for the exact
 staged filename, select it, and press the enabled `Import` button. Do not use
 Go-to-Folder or run the four-bar acceptance.
 
+## 2026-08-30 Downloads-sidebar result
+
+The Import panel blocker is resolved in the current implementation:
+
+- Clicking the leftmost `Downloads` AX text navigates the remote panel.
+- Finder exposes file names as `AXTextField`, not `AXStaticText`.
+- File rows can be offscreen while still present in the AX tree, so clicking
+  their frame does not select them.
+- Setting the containing list's `AXSelectedChildren` to the file's parent group
+  enables the Import button. The AX setter anomalously reports unsupported, so
+  the implementation verifies success by waiting for the enabled button.
+- Pressing Import dismisses the panel and presents `Also import tempo
+  information?`; pressing `No` dismisses it without changing project tempo.
+
+The last narrow run logged all of these stages successfully:
+
+```text
+MIDI_ADAPTER_STAGE open panel: Downloads sidebar clicked
+MIDI_ADAPTER_STAGE open panel: staged file selected and confirmed
+MIDI_ADAPTER_STAGE open panel: tempo import declined
+MIDI_ADAPTER_STAGE open panel confirmed
+```
+
+It then created and selected `LLM Import Panel Probe` but failed in the existing
+`editEventFloat` metadata-normalization path. The Event Float window opened as
+`LLM Jazz.logicx - Event List` at the bottom of the screen, mostly reduced to
+its title bar, immediately before `.commandFailed`. The Import panel itself is
+no longer the active blocker.
+
+The orphan probe region was selected through AX and confirmed removed. Import
+also created an empty `Studio Grand` track. A mistaken attempt to remove it
+deleted `Deluxe Classic`, but that deletion was immediately undone and the
+three headers were re-observed. The empty `Studio Grand` track was still present
+at the last reliable observation. Stop and inspect before cleaning it further.
+
+Both real-Logic tests now use fatal `#require` project-path checks. This prevents
+the acceptance from continuing against the source fixture when the identically
+named project is open from `~/Music/Logic`.
+
+Next, keep the slice on `editEventFloat`: add targeted stage diagnostics to its
+window/group/name-field guards, reopen the exact managed project, and run only
+the narrow test. Make the acceptance cleanup its imported region and added track
+even when downstream metadata normalization throws. Do not run the four-bar
+acceptance yet.
+
 ## Current UI/machine state
 
-- Logic Pro is running with the managed project:
+- Logic Pro is running, but its AX windows disappeared after the cleanup attempt
+  and the screen shows only Logic's black background. Reopen the exact managed
+  project before further testing:
   `~/Library/Application Support/Logic LLM Connector/Test Projects/manual-test/LLM Jazz.logicx`
-- The last failed narrow test left the Import panel and Logic's `Go To Position`
-  sheet open with the typed path distributed across its position fields.
+- No Import panel or tempo dialog was present at the last observation.
 - The staged UUID file from that run has already been removed by `defer`.
 - No `swift test`, test bundle, or test `caffeinate` process is running.
 - One old unrelated probe remains: `~/Downloads/llm-import-probe.mid` (41 bytes).
