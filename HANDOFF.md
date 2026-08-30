@@ -87,27 +87,61 @@ Read-only AX inspection proved:
 - The current code asks for `kAXDefaultButtonAttribute` and falls back to `AXConfirm`, but the log does not say which branch ran. It is likely that `kAXDefaultButtonAttribute` is absent and the explicit untitled button has never actually been pressed.
 - Supplying the full file path and supplying the containing directory (`~/Downloads`) both left the sheet open with the current submit logic.
 
+## 2026-08-30 bounded experiment result
+
+The prescribed explicit-button experiment was run once with the narrow test.
+Before the valid run, two setup attempts failed before import: Logic initially
+had no project open, then a transient `UserNotificationCenter` banner stole
+frontmost focus. Reopening the exact managed project, dismissing the known
+audio-interface alert, and allowing the banner to clear restored the test
+preconditions.
+
+The valid run reached the Go-to sheet and proved:
+
+- `kAXDefaultButtonAttribute` is absent.
+- The sheet has one untitled enabled `AXButton`, frame
+  `{{932, 225}, {18, 18}}`, exposing only `AXPress`.
+- A real mouse click on that frame did not submit the sheet; it cleared the
+  text field. The button is the field's clear control, not a Go button.
+- A screenshot after the click showed the focused field visibly empty with
+  recent paths below it. Read-only AX inspection also reported `value: ""`,
+  `focused: true`, frame `{{520, 223}, {344, 22}}`, and actions
+  `AXShowMenu, AXConfirm`.
+- The staged file was removed by `defer`; no MIDI region was imported.
+- The failed experimental source change was reverted. Only this handoff update
+  remains from the experiment.
+
 ## Best next bounded experiment
 
 Do not run the four-bar acceptance.
 
 In `completeOpenPanel(path:)`:
 
-1. After setting the Go-to field to the containing directory, find the first `AXButton` in `descendants(sheet, maximum: ...)` explicitly.
-2. Log whether `kAXDefaultButtonAttribute` existed so the branch is unambiguous.
-3. Prefer a real `click(at:)` on the untitled button's frame; the panel service has previously ignored semantic AX actions while accepting real mouse clicks.
-4. Wait for the sheet to disappear.
-5. If it disappears, wait for the exact staged filename `AXStaticText`, click its frame once, and press the enabled `Import` button.
-6. Run the narrow test once.
+1. Keep the real click that focuses the Go-to text field, but do not use
+   `AXUIElementSetAttributeValue` and do not click the untitled button.
+2. Clear/select the field with Command-A and enter the containing Downloads
+   path through the existing System Events `typeText`/key-delivery seam, so the
+   remote panel receives real keyboard input.
+3. Read the field's AX value back and require it to equal the directory before
+   submitting. Log only the equality result, not a broad UI dump.
+4. Press Return through `pressKey(36)` and wait for the sheet to disappear.
+5. If it disappears, wait for the exact staged filename `AXStaticText`, click
+   its frame once, and press the enabled `Import` button.
+6. Run the narrow test once, with a short delay before it so any transient
+   `UserNotificationCenter` completion banner cannot steal Logic focus.
 
-If the real click still does not dismiss the sheet, stop. Inspect the sheet button's frame/actions and take one screenshot rather than retrying the test.
+If real keyboard entry does not make the AX value match the directory, stop
+and capture one screenshot. If the value matches but Return does not dismiss
+the sheet, stop and inspect whether the field's Return key event reaches the
+remote panel; do not retry the test.
 
 ## Current UI/machine state
 
 - Logic Pro is running with the managed project:
   `~/Library/Application Support/Logic LLM Connector/Test Projects/manual-test/LLM Jazz.logicx`
-- The last failed narrow test left the Import panel and Go-to sheet open.
-- The staged UUID file named in that sheet has already been removed by `defer`.
+- The last failed narrow test left the Import panel and Go-to sheet open with
+  an empty, focused field.
+- The staged UUID file from that run has already been removed by `defer`.
 - No `swift test`, test bundle, or test `caffeinate` process is running.
 - One old unrelated probe remains: `~/Downloads/llm-import-probe.mid` (41 bytes).
 - Logic may show this launch alert after restart:
