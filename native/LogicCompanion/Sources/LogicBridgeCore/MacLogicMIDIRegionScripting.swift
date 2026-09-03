@@ -1289,7 +1289,7 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
 
     private func discoveryLog(_ message: String) {
         if ProcessInfo.processInfo.environment["LOGIC_MIDI_ADAPTER_DISCOVERY"] == "1" {
-            print("MIDI_ADAPTER_STAGE \(message)")
+            FileHandle.standardError.write(Data("MIDI_ADAPTER_STAGE \(message)\n".utf8))
         }
     }
 }

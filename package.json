@@ -17,6 +17,7 @@
     "test:contracts": "node --test tests/contracts/*.test.mjs",
     "test:mcp": "tsx --test tests/mcp/*.test.ts",
     "test:native": "swift test --package-path native/LogicCompanion",
+    "test:midi-native-acceptance": "node --import tsx scripts/run-real-logic-midi-acceptance.ts",
     "test:integration": "npm run build:app && node scripts/stop-built-companion.mjs && LOGIC_INTEGRATION_TEST=1 swift test --package-path native/LogicCompanion && LOGIC_INTEGRATION_TEST=1 tsx --test tests/integration/*.test.ts",
     "test:track-integration": "npm run build:app && node scripts/stop-built-companion.mjs && LOGIC_INTEGRATION_TEST=1 LOGIC_TRACK_INTEGRATION_TEST=1 tsx --test tests/integration/*.test.ts",
     "test:midi-integration": "npm run build:app && node scripts/stop-built-companion.mjs && LOGIC_INTEGRATION_TEST=1 LOGIC_MIDI_INTEGRATION_TEST=1 tsx --test tests/integration/*.test.ts",

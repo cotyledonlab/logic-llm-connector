@@ -9,6 +9,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import { UnixSocketLogicBridge } from "../../packages/mcp-server/src/unix-socket-bridge.js";
+import { runRealLogicMIDIAcceptance } from "../../scripts/run-real-logic-midi-acceptance.js";
 
 const companionPath = join(
   process.cwd(),
@@ -516,31 +517,12 @@ test("MCP safely owns a copied Test Project through lifecycle and optional track
     }
 
     if (midiAcceptanceEnabled) {
-      const midiAcceptance = spawnSync(
-        "swift",
-        [
-          "test",
-          "--package-path",
-          "native/LogicCompanion",
-          "--filter",
-          "LogicBridgeCoreTests.realLogicMIDIOperationsRoundTripFourBars",
-        ],
-        {
-          cwd: process.cwd(),
-          env: {
-            ...process.env,
-            LOGIC_MIDI_INTEGRATION_TEST: "1",
-            LOGIC_MANAGED_TEST_PROJECT_PATH: managedPath,
-          },
-          encoding: "utf8",
-          timeout: 240_000,
-        },
-      );
-      if (midiAcceptance.status !== 0) {
-        process.stderr.write(`real-Logic MIDI acceptance diagnostics:\n${midiAcceptance.stdout}\n${midiAcceptance.stderr}\n`);
-      }
+      const midiAcceptance = await runRealLogicMIDIAcceptance({
+        managedProjectPath: managedPath,
+        timeoutMs: 240_000,
+      });
       assert.equal(
-        midiAcceptance.status,
+        midiAcceptance.timedOut ? 124 : midiAcceptance.code,
         0,
         `real-Logic MIDI acceptance failed:\n${midiAcceptance.stdout}\n${midiAcceptance.stderr}`,
       );

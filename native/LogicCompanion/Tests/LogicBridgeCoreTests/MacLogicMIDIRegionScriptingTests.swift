@@ -60,6 +60,13 @@ private func activateLogicForMIDIAcceptance(_ logic: NSRunningApplication) throw
     }
 }
 
+private func reportMIDIAcceptanceStage(_ stage: String, startedAt: Date) {
+    let elapsedMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
+    FileHandle.standardError.write(
+        Data("MIDI_ACCEPTANCE_STAGE \(stage) elapsed-ms=\(elapsedMilliseconds)\n".utf8)
+    )
+}
+
 @Test(
     "real Logic MIDI adapter exports exact region note content",
     .enabled(if: ProcessInfo.processInfo.environment["LOGIC_MIDI_ADAPTER_DISCOVERY"] == "1")
@@ -117,15 +124,19 @@ func realLogicMIDIImportPanelRoundTrip() throws {
     )
 )
 func realLogicMIDIOperationsRoundTripFourBars() throws {
+    let acceptanceStartedAt = Date()
+    reportMIDIAcceptanceStage("test-started", startedAt: acceptanceStartedAt)
     let managedPath = try #require(ProcessInfo.processInfo.environment["LOGIC_MANAGED_TEST_PROJECT_PATH"])
     let projectScripting = MacLogicProjectScripting()
     let observedProject = try #require(try projectScripting.observe())
     try #require(URL(fileURLWithPath: observedProject.path).standardizedFileURL.path ==
         URL(fileURLWithPath: managedPath).standardizedFileURL.path)
+    reportMIDIAcceptanceStage("project-verified", startedAt: acceptanceStartedAt)
 
     let logic = try #require(NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.logic10").first)
     try activateLogicForMIDIAcceptance(logic)
     #expect(NSWorkspace.shared.frontmostApplication?.processIdentifier == logic.processIdentifier)
+    reportMIDIAcceptanceStage("logic-focused", startedAt: acceptanceStartedAt)
 
     let trackScripting = MacLogicTrackScripting()
     let scripting = MacLogicMIDIRegionScripting(trackScripting: trackScripting)
@@ -139,7 +150,9 @@ func realLogicMIDIOperationsRoundTripFourBars() throws {
         testModeReady: { true }
     )
 
+    reportMIDIAcceptanceStage("initial-observe-began", startedAt: acceptanceStartedAt)
     let initial = controller.observe(operationID: "midi-real-initial")
+    reportMIDIAcceptanceStage("initial-observe-returned-\(initial.status.rawValue)", startedAt: acceptanceStartedAt)
     #expect(initial.status == .succeeded, Comment(rawValue: String(describing: initial)))
     #expect(initial.data.regions.count == 4)
     #expect(initial.data.regions.map(\.position.ticks) == [0, 3_840, 7_680, 11_520])
@@ -152,6 +165,7 @@ func realLogicMIDIOperationsRoundTripFourBars() throws {
         MIDINoteContent(pitch: 64, onset: MusicalTime(ticks: 960), duration: MusicalTime(ticks: 1_920), velocity: 80, channel: 1),
         MIDINoteContent(pitch: 72, onset: MusicalTime(ticks: 14_400), duration: MusicalTime(ticks: 960), velocity: 48, channel: 2),
     ]
+    reportMIDIAcceptanceStage("create-began", startedAt: acceptanceStartedAt)
     let created = controller.create(
         trackID: trackID,
         name: "LLM Four Bars",
@@ -161,28 +175,35 @@ func realLogicMIDIOperationsRoundTripFourBars() throws {
         operationID: "midi-real-create",
         timeoutMilliseconds: 45_000
     )
+    reportMIDIAcceptanceStage("create-returned-\(created.status.rawValue)", startedAt: acceptanceStartedAt)
     #expect(created.status == .succeeded, Comment(rawValue: String(describing: created)))
     #expect(created.data.fidelityDifferences.isEmpty)
     let regionID = try #require(created.data.targetRegionID)
     let createdRegion = try #require(created.data.regions.first(where: { $0.id == regionID }))
     #expect(createdRegion.notes.map(\.content) == fixtureNotes)
 
+    reportMIDIAcceptanceStage("rename-began", startedAt: acceptanceStartedAt)
     let renamed = controller.rename(
         regionID: regionID, name: "LLM Four Bars Edited",
         operationID: "midi-real-rename", timeoutMilliseconds: 30_000
     )
+    reportMIDIAcceptanceStage("rename-returned-\(renamed.status.rawValue)", startedAt: acceptanceStartedAt)
     #expect(renamed.status == .succeeded, Comment(rawValue: String(describing: renamed)))
 
+    reportMIDIAcceptanceStage("move-began", startedAt: acceptanceStartedAt)
     let moved = controller.move(
         regionID: regionID, position: MusicalTime(ticks: 23_040),
         operationID: "midi-real-move", timeoutMilliseconds: 30_000
     )
+    reportMIDIAcceptanceStage("move-returned-\(moved.status.rawValue)", startedAt: acceptanceStartedAt)
     #expect(moved.status == .succeeded, Comment(rawValue: String(describing: moved)))
 
+    reportMIDIAcceptanceStage("resize-began", startedAt: acceptanceStartedAt)
     let resized = controller.resize(
         regionID: regionID, length: MusicalTime(ticks: 16_320),
         operationID: "midi-real-resize", timeoutMilliseconds: 30_000
     )
+    reportMIDIAcceptanceStage("resize-returned-\(resized.status.rawValue)", startedAt: acceptanceStartedAt)
     #expect(resized.status == .succeeded, Comment(rawValue: String(describing: resized)))
 
     let firstNote = try #require(resized.data.regions.first(where: { $0.id == regionID })?.notes.first)
@@ -190,40 +211,51 @@ func realLogicMIDIOperationsRoundTripFourBars() throws {
         pitch: 37, onset: firstNote.onset, duration: firstNote.duration,
         velocity: 111, channel: firstNote.channel
     )
+    reportMIDIAcceptanceStage("update-note-began", startedAt: acceptanceStartedAt)
     let updated = controller.updateNote(
         regionID: regionID, noteID: firstNote.id, note: changedNote,
         operationID: "midi-real-update-note", timeoutMilliseconds: 45_000
     )
+    reportMIDIAcceptanceStage("update-note-returned-\(updated.status.rawValue)", startedAt: acceptanceStartedAt)
     #expect(updated.status == .succeeded, Comment(rawValue: String(describing: updated)))
     #expect(updated.data.regions.first(where: { $0.id == regionID })?.notes.contains(where: { $0.content == changedNote }) == true)
 
+    reportMIDIAcceptanceStage("duplicate-began", startedAt: acceptanceStartedAt)
     let duplicated = controller.duplicate(
         regionID: regionID, position: MusicalTime(ticks: 42_240),
         operationID: "midi-real-duplicate", timeoutMilliseconds: 45_000
     )
+    reportMIDIAcceptanceStage("duplicate-returned-\(duplicated.status.rawValue)", startedAt: acceptanceStartedAt)
     #expect(duplicated.status == .succeeded, Comment(rawValue: String(describing: duplicated)))
     #expect(duplicated.data.fidelityDifferences.isEmpty)
     let duplicateID = try #require(duplicated.data.targetRegionID)
 
+    reportMIDIAcceptanceStage("split-began", startedAt: acceptanceStartedAt)
     let split = controller.split(
         regionID: duplicateID, position: MusicalTime(ticks: 49_920),
         operationID: "midi-real-split", timeoutMilliseconds: 45_000
     )
+    reportMIDIAcceptanceStage("split-returned-\(split.status.rawValue)", startedAt: acceptanceStartedAt)
     #expect(split.status == .succeeded, Comment(rawValue: String(describing: split)))
     #expect(!split.data.createdRegionIDs.isEmpty)
 
+    reportMIDIAcceptanceStage("playback-began", startedAt: acceptanceStartedAt)
     let playback = controller.verifyPlayback(
         regionID: regionID, operationID: "midi-real-playback", timeoutMilliseconds: 5_000
     )
+    reportMIDIAcceptanceStage("playback-returned-\(playback.status.rawValue)", startedAt: acceptanceStartedAt)
     #expect(playback.status == .succeeded, Comment(rawValue: String(describing: playback)))
     #expect(playback.data.playbackVerified)
 
+    reportMIDIAcceptanceStage("delete-began", startedAt: acceptanceStartedAt)
     let deleted = controller.delete(
         regionID: regionID, confirmed: true,
         operationID: "midi-real-delete", timeoutMilliseconds: 30_000
     )
+    reportMIDIAcceptanceStage("delete-returned-\(deleted.status.rawValue)", startedAt: acceptanceStartedAt)
     #expect(deleted.status == .succeeded, Comment(rawValue: String(describing: deleted)))
     #expect(deleted.data.undoAvailable)
     #expect(!deleted.data.regions.contains(where: { $0.id == regionID }))
     #expect(!logic.isTerminated)
+    reportMIDIAcceptanceStage("test-passed", startedAt: acceptanceStartedAt)
 }
