@@ -98,7 +98,7 @@ func realLogicMIDIImportPanelRoundTrip() throws {
 
     let logic = try #require(NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.logic10").first)
     try activateLogicForMIDIAcceptance(logic)
-    #expect(NSWorkspace.shared.frontmostApplication?.processIdentifier == logic.processIdentifier)
+    try #require(NSWorkspace.shared.frontmostApplication?.processIdentifier == logic.processIdentifier)
 
     let trackScripting = MacLogicTrackScripting()
     let trackID = try #require(try trackScripting.observeTracks().sorted(by: { $0.position < $1.position }).first?.id)
@@ -135,7 +135,7 @@ func realLogicMIDIOperationsRoundTripFourBars() throws {
 
     let logic = try #require(NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.logic10").first)
     try activateLogicForMIDIAcceptance(logic)
-    #expect(NSWorkspace.shared.frontmostApplication?.processIdentifier == logic.processIdentifier)
+    try #require(NSWorkspace.shared.frontmostApplication?.processIdentifier == logic.processIdentifier)
     reportMIDIAcceptanceStage("logic-focused", startedAt: acceptanceStartedAt)
 
     let trackScripting = MacLogicTrackScripting()
@@ -153,7 +153,7 @@ func realLogicMIDIOperationsRoundTripFourBars() throws {
     reportMIDIAcceptanceStage("initial-observe-began", startedAt: acceptanceStartedAt)
     let initial = controller.observe(operationID: "midi-real-initial")
     reportMIDIAcceptanceStage("initial-observe-returned-\(initial.status.rawValue)", startedAt: acceptanceStartedAt)
-    #expect(initial.status == .succeeded, Comment(rawValue: String(describing: initial)))
+    try #require(initial.status == .succeeded, Comment(rawValue: String(describing: initial)))
     #expect(initial.data.regions.count == 4)
     #expect(initial.data.regions.map(\.position.ticks) == [0, 3_840, 7_680, 11_520])
     #expect(initial.data.regions.allSatisfy { $0.length.ticks == 3_840 && !$0.notes.isEmpty })
@@ -176,7 +176,7 @@ func realLogicMIDIOperationsRoundTripFourBars() throws {
         timeoutMilliseconds: 45_000
     )
     reportMIDIAcceptanceStage("create-returned-\(created.status.rawValue)", startedAt: acceptanceStartedAt)
-    #expect(created.status == .succeeded, Comment(rawValue: String(describing: created)))
+    try #require(created.status == .succeeded, Comment(rawValue: String(describing: created)))
     #expect(created.data.fidelityDifferences.isEmpty)
     let regionID = try #require(created.data.targetRegionID)
     let createdRegion = try #require(created.data.regions.first(where: { $0.id == regionID }))
@@ -188,7 +188,7 @@ func realLogicMIDIOperationsRoundTripFourBars() throws {
         operationID: "midi-real-rename", timeoutMilliseconds: 30_000
     )
     reportMIDIAcceptanceStage("rename-returned-\(renamed.status.rawValue)", startedAt: acceptanceStartedAt)
-    #expect(renamed.status == .succeeded, Comment(rawValue: String(describing: renamed)))
+    try #require(renamed.status == .succeeded, Comment(rawValue: String(describing: renamed)))
 
     reportMIDIAcceptanceStage("move-began", startedAt: acceptanceStartedAt)
     let moved = controller.move(
@@ -196,7 +196,7 @@ func realLogicMIDIOperationsRoundTripFourBars() throws {
         operationID: "midi-real-move", timeoutMilliseconds: 30_000
     )
     reportMIDIAcceptanceStage("move-returned-\(moved.status.rawValue)", startedAt: acceptanceStartedAt)
-    #expect(moved.status == .succeeded, Comment(rawValue: String(describing: moved)))
+    try #require(moved.status == .succeeded, Comment(rawValue: String(describing: moved)))
 
     reportMIDIAcceptanceStage("resize-began", startedAt: acceptanceStartedAt)
     let resized = controller.resize(
@@ -204,7 +204,7 @@ func realLogicMIDIOperationsRoundTripFourBars() throws {
         operationID: "midi-real-resize", timeoutMilliseconds: 30_000
     )
     reportMIDIAcceptanceStage("resize-returned-\(resized.status.rawValue)", startedAt: acceptanceStartedAt)
-    #expect(resized.status == .succeeded, Comment(rawValue: String(describing: resized)))
+    try #require(resized.status == .succeeded, Comment(rawValue: String(describing: resized)))
 
     let firstNote = try #require(resized.data.regions.first(where: { $0.id == regionID })?.notes.first)
     let changedNote = MIDINoteContent(
@@ -217,7 +217,7 @@ func realLogicMIDIOperationsRoundTripFourBars() throws {
         operationID: "midi-real-update-note", timeoutMilliseconds: 45_000
     )
     reportMIDIAcceptanceStage("update-note-returned-\(updated.status.rawValue)", startedAt: acceptanceStartedAt)
-    #expect(updated.status == .succeeded, Comment(rawValue: String(describing: updated)))
+    try #require(updated.status == .succeeded, Comment(rawValue: String(describing: updated)))
     #expect(updated.data.regions.first(where: { $0.id == regionID })?.notes.contains(where: { $0.content == changedNote }) == true)
 
     reportMIDIAcceptanceStage("duplicate-began", startedAt: acceptanceStartedAt)
@@ -226,7 +226,7 @@ func realLogicMIDIOperationsRoundTripFourBars() throws {
         operationID: "midi-real-duplicate", timeoutMilliseconds: 45_000
     )
     reportMIDIAcceptanceStage("duplicate-returned-\(duplicated.status.rawValue)", startedAt: acceptanceStartedAt)
-    #expect(duplicated.status == .succeeded, Comment(rawValue: String(describing: duplicated)))
+    try #require(duplicated.status == .succeeded, Comment(rawValue: String(describing: duplicated)))
     #expect(duplicated.data.fidelityDifferences.isEmpty)
     let duplicateID = try #require(duplicated.data.targetRegionID)
 
@@ -236,7 +236,7 @@ func realLogicMIDIOperationsRoundTripFourBars() throws {
         operationID: "midi-real-split", timeoutMilliseconds: 45_000
     )
     reportMIDIAcceptanceStage("split-returned-\(split.status.rawValue)", startedAt: acceptanceStartedAt)
-    #expect(split.status == .succeeded, Comment(rawValue: String(describing: split)))
+    try #require(split.status == .succeeded, Comment(rawValue: String(describing: split)))
     #expect(!split.data.createdRegionIDs.isEmpty)
 
     reportMIDIAcceptanceStage("playback-began", startedAt: acceptanceStartedAt)
@@ -244,7 +244,7 @@ func realLogicMIDIOperationsRoundTripFourBars() throws {
         regionID: regionID, operationID: "midi-real-playback", timeoutMilliseconds: 5_000
     )
     reportMIDIAcceptanceStage("playback-returned-\(playback.status.rawValue)", startedAt: acceptanceStartedAt)
-    #expect(playback.status == .succeeded, Comment(rawValue: String(describing: playback)))
+    try #require(playback.status == .succeeded, Comment(rawValue: String(describing: playback)))
     #expect(playback.data.playbackVerified)
 
     reportMIDIAcceptanceStage("delete-began", startedAt: acceptanceStartedAt)
@@ -253,7 +253,7 @@ func realLogicMIDIOperationsRoundTripFourBars() throws {
         operationID: "midi-real-delete", timeoutMilliseconds: 30_000
     )
     reportMIDIAcceptanceStage("delete-returned-\(deleted.status.rawValue)", startedAt: acceptanceStartedAt)
-    #expect(deleted.status == .succeeded, Comment(rawValue: String(describing: deleted)))
+    try #require(deleted.status == .succeeded, Comment(rawValue: String(describing: deleted)))
     #expect(deleted.data.undoAvailable)
     #expect(!deleted.data.regions.contains(where: { $0.id == regionID }))
     #expect(!logic.isTerminated)
