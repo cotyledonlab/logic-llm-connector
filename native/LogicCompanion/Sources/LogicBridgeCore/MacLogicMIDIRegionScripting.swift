@@ -119,6 +119,13 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
             let application = try logicApplication(requireFocus: false)
             let tracks = try trackScripting.observeTracks()
             let beforeElements = try rawRegions(application: application, tracks: tracks).map(\.element)
+            let beforeTrackIDs = Set(tracks.map(\.id))
+            defer {
+                cleanupImportPanelAcceptance(
+                    beforeElements: beforeElements,
+                    beforeTrackIDs: beforeTrackIDs
+                )
+            }
 
             try importRegion(
                 trackID: trackID,
@@ -127,15 +134,17 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
                 length: length,
                 notes: notes
             )
+        }
+    }
 
-            let refreshedTracks = try trackScripting.observeTracks()
-            let refreshedApplication = try logicApplication(requireFocus: false)
-            let after = try rawRegions(application: refreshedApplication, tracks: refreshedTracks)
-            guard let imported = after.first(where: { candidate in
-                !beforeElements.contains(where: { CFEqual($0, candidate.element) })
-            }) else {
-                throw LogicMIDIRegionScriptingError.commandFailed
-            }
+    private func cleanupImportPanelAcceptance(
+        beforeElements: [AXUIElement],
+        beforeTrackIDs: Set<String>
+    ) {
+        guard let tracks = try? trackScripting.observeTracks(),
+              let application = try? logicApplication(requireFocus: false),
+              let regions = try? rawRegions(application: application, tracks: tracks) else { return }
+        for imported in regions where !beforeElements.contains(where: { CFEqual($0, imported.element) }) {
             let cleanupRecord = Record(
                 id: "acceptance-import", element: imported.element,
                 trackID: imported.trackID, name: imported.name,
@@ -143,10 +152,30 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
                 selected: imported.selected, active: imported.active,
                 notes: [], notesObservedAt: nil
             )
-            try select(cleanupRecord)
-            pressKey(51)
-            Thread.sleep(forTimeInterval: 0.3)
+            if (try? select(cleanupRecord)) != nil {
+                pressKey(51)
+                Thread.sleep(forTimeInterval: 0.3)
+            }
         }
+        guard let refreshedTracks = try? trackScripting.observeTracks() else { return }
+        for track in refreshedTracks where !beforeTrackIDs.contains(track.id) {
+            try? trackScripting.delete(trackID: track.id)
+            confirmAcceptanceTrackDeletion(application: application)
+        }
+    }
+
+    private func confirmAcceptanceTrackDeletion(application: AXUIElement) {
+        guard let prompt = windows(application).first(where: { window in
+            attributeBool(window, kAXModalAttribute) == true &&
+                descendants(window, maximum: 100).contains {
+                    attributeString($0, kAXValueAttribute) == "Delete Track and Regions?"
+                }
+        }), let delete = descendants(prompt, maximum: 100).first(where: {
+            attributeString($0, kAXRoleAttribute) == kAXButtonRole &&
+                attributeString($0, kAXTitleAttribute) == "Delete"
+        }) else { return }
+        _ = AXUIElementPerformAction(delete, kAXPressAction as CFString)
+        Thread.sleep(forTimeInterval: 0.3)
     }
 #endif
 
@@ -686,24 +715,41 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
             }
         }
         guard let float else { throw LogicMIDIRegionScriptingError.commandFailed }
-        let elements = descendants(float, maximum: 500)
-        let groups = elements.filter {
-            attributeString($0, kAXRoleAttribute) == kAXGroupRole &&
-                descendants($0, maximum: 20).filter { attributeString($0, kAXRoleAttribute) == kAXSliderRole }.count == 4
-        }.sorted { (frame($0)?.minX ?? 0) < (frame($1)?.minX ?? 0) }
+        let groups = eventFloatGroups(float)
         if let position {
-            guard let group = groups.first else { throw LogicMIDIRegionScriptingError.commandFailed }
-            try setSegments(group, values: LogicBBTValue.position(from: position.ticks).values)
+            guard !groups.isEmpty else {
+                discoveryLog("editEventFloat: position group missing")
+                throw LogicMIDIRegionScriptingError.commandFailed
+            }
+            try setEventFloatSegments(
+                float, groupIndex: 0,
+                values: LogicBBTValue.position(from: position.ticks).values
+            )
         }
         if let length {
-            guard let group = groups.last, groups.count >= 2 else { throw LogicMIDIRegionScriptingError.commandFailed }
-            try setSegments(group, values: LogicBBTValue.duration(from: length.ticks).values)
+            guard groups.count >= 2 else {
+                discoveryLog("editEventFloat: length group missing")
+                throw LogicMIDIRegionScriptingError.commandFailed
+            }
+            try setEventFloatSegments(
+                float, groupIndex: groups.count - 1,
+                values: LogicBBTValue.duration(from: length.ticks).values
+            )
         }
         if let name {
-            guard let field = elements.first(where: {
+            let refreshedTextFields = descendants(float, maximum: 500).filter {
+                attributeString($0, kAXRoleAttribute) == kAXTextFieldRole
+            }
+            guard let field = refreshedTextFields.first(where: {
                 attributeString($0, kAXRoleAttribute) == kAXTextFieldRole &&
                     attributeString($0, kAXValueAttribute) == record.name
-            }), AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, name as CFTypeRef) == .success else {
+            }) else {
+                discoveryLog("editEventFloat: matching name field missing")
+                throw LogicMIDIRegionScriptingError.commandFailed
+            }
+            let status = AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, name as CFTypeRef)
+            guard status == .success else {
+                discoveryLog("editEventFloat: name field set=\(status.rawValue)")
                 throw LogicMIDIRegionScriptingError.commandFailed
             }
             pressKey(36)
@@ -712,24 +758,70 @@ public final class MacLogicMIDIRegionScripting: LogicMIDIRegionScripting, @unche
     }
 
     private func setSegments(_ group: AXUIElement, values: [Int64]) throws {
-        let sliders = descendants(group, maximum: 20).filter {
+        try setSegments(values: values) {
+            self.sliders(in: group)
+        }
+    }
+
+    private func setEventFloatSegments(
+        _ float: AXUIElement,
+        groupIndex: Int,
+        values: [Int64]
+    ) throws {
+        try setSegments(values: values) {
+            let groups = self.eventFloatGroups(float)
+            guard groups.indices.contains(groupIndex) else { return [] }
+            return self.sliders(in: groups[groupIndex])
+        }
+    }
+
+    private func setSegments(
+        values: [Int64],
+        sliders: () -> [AXUIElement]
+    ) throws {
+        let initialSliders = sliders()
+        // Condensed LCD modes expose fewer segments (e.g. bar/beat only);
+        // set the leading components that are present.
+        guard initialSliders.count <= values.count, !initialSliders.isEmpty else {
+            discoveryLog("setSegments: sliders=\(initialSliders.count) values=\(values.count)")
+            throw LogicMIDIRegionScriptingError.commandFailed
+        }
+        for (index, value) in values.prefix(initialSliders.count).enumerated() {
+            let refreshDeadline = Date().addingTimeInterval(1)
+            var refreshedSliders = sliders()
+            while refreshedSliders.count != initialSliders.count, Date() < refreshDeadline {
+                Thread.sleep(forTimeInterval: 0.02)
+                refreshedSliders = sliders()
+            }
+            guard refreshedSliders.count == initialSliders.count else {
+                discoveryLog("setSegments: refreshed=\(refreshedSliders.count) expected=\(initialSliders.count)")
+                throw LogicMIDIRegionScriptingError.commandFailed
+            }
+            let status = AXUIElementSetAttributeValue(
+                refreshedSliders[index], kAXValueAttribute as CFString, NSNumber(value: value)
+            )
+            guard status == .success else {
+                discoveryLog("setSegments: index=\(index) set=\(status.rawValue)")
+                throw LogicMIDIRegionScriptingError.commandFailed
+            }
+        }
+        pressKey(36)
+    }
+
+    private func eventFloatGroups(_ float: AXUIElement) -> [AXUIElement] {
+        descendants(float, maximum: 500).filter {
+            attributeString($0, kAXRoleAttribute) == kAXGroupRole &&
+                sliders(in: $0).count == 4
+        }.sorted { (frame($0)?.minX ?? 0) < (frame($1)?.minX ?? 0) }
+    }
+
+    private func sliders(in group: AXUIElement) -> [AXUIElement] {
+        descendants(group, maximum: 20).filter {
             attributeString($0, kAXRoleAttribute) == kAXSliderRole
         }.sorted {
             (attributeString($0, kAXDescriptionAttribute) ?? "") <
                 (attributeString($1, kAXDescriptionAttribute) ?? "")
         }
-        // Condensed LCD modes expose fewer segments (e.g. bar/beat only);
-        // set the leading components that are present.
-        guard sliders.count <= values.count, !sliders.isEmpty else {
-            discoveryLog("setSegments: sliders=\(sliders.count) values=\(values.count)")
-            throw LogicMIDIRegionScriptingError.commandFailed
-        }
-        for (slider, value) in zip(sliders, values) {
-            guard AXUIElementSetAttributeValue(slider, kAXValueAttribute as CFString, NSNumber(value: value)) == .success else {
-                throw LogicMIDIRegionScriptingError.commandFailed
-            }
-        }
-        pressKey(36)
     }
 
     private func setPlayhead(_ position: MusicalTime) throws {
